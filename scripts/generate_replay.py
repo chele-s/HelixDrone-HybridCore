@@ -61,7 +61,8 @@ class ReplayGenerator:
             agent_type=self.config.agent_type,
             state_dim=self.state_dim,
             action_dim=self.action_dim,
-            device=self.device
+            device=self.device,
+            hidden_dim=512
         )
         
         checkpoint_path = Path(self.config.checkpoint_path)
