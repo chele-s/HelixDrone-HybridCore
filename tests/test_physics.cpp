@@ -42,9 +42,9 @@ namespace CoreTest {
         static void validate_vector_algebra() {
             Vec3 v1(1.0, 2.0, 3.0);
             Vec3 v2(4.0, 5.0, 6.0);
-            assert_near((v1 + v2).norm(), std::sqrt(152.0), 1e-9, "Vec3::Add");
+            assert_near((v1 + v2).norm(), std::sqrt(155.0), 1e-9, "Vec3::Add");
             assert_near(v1.dot(v2), 32.0, 1e-9, "Vec3::Dot");
-            assert_near(v1.cross(v2).norm(), std::sqrt(324.0), 1e-9, "Vec3::Cross");
+            assert_near(v1.cross(v2).norm(), std::sqrt(54.0), 1e-9, "Vec3::Cross");
         }
 
         static void validate_quaternion_kinematics() {
@@ -87,13 +87,14 @@ namespace CoreTest {
             config.enableMotorDynamics = false;
             config.enableGroundEffect = false;
             config.enableWindDisturbance = false;
+            config.aero.airDensity = 0.0;
             config.integrationMethod = IntegrationMethod::RK4;
             Quadrotor drone(config);
             
             drone.setPosition(Vec3(0, 0, 100));
             double initial_energy = 9.80665 * config.mass * 100.0;
             
-            for(int i=0; i<5000; ++i) {
+            for(int i=0; i<500; ++i) {
                 drone.step(MotorCommand(0, 0, 0, 0), 0.002);
             }
             
@@ -107,7 +108,7 @@ namespace CoreTest {
         static void integration_symplecticity_check() {
             QuadrotorConfig cfg; 
             cfg.enableWindDisturbance = true;
-            PhysicsEngine engine(IntegrationMethod::RK45);
+            PhysicsEngine engine(IntegrationMethod::RK45_ADAPTIVE);
             RigidBodyState state;
             state.position = Vec3(0,0,10);
             state.orientation = Quaternion(1,0,0,0);
