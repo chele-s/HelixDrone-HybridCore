@@ -297,20 +297,28 @@ class Trainer:
 def main():
     train_config = TrainConfig(
         agent_type='td3',
-        total_timesteps=300_000,
-        batch_size=256,
-        buffer_size=500_000,
-        learning_starts=5000,
+        total_timesteps=500_000,
+        batch_size=512,
+        buffer_size=1_000_000,
+        learning_starts=10000,
+        train_freq=20,
+        gradient_steps=10,
         
-        lr_actor=1e-4,
+        lr_actor=3e-4,
         lr_critic=3e-4,
-        hidden_dim=256,
+        hidden_dim=512,
         
-        exploration_noise=0.15,
-        exploration_noise_decay=0.99995,
-        exploration_noise_min=0.02,
+        policy_noise=0.15,
+        noise_clip=0.4,
+        policy_delay=2,
+        
+        exploration_noise=0.25,
+        exploration_noise_decay=0.99998,
+        exploration_noise_min=0.05,
         
         use_per=True,
+        per_alpha=0.7,
+        per_beta_start=0.5,
         
         eval_freq=10000,
         save_freq=50000,
@@ -322,18 +330,19 @@ def main():
     
     env_config = EnvConfig(
         dt=0.02,
-        max_steps=500,
-        domain_randomization=True,
-        wind_enabled=True,
+        max_steps=1000,
+        domain_randomization=False,
+        wind_enabled=False,
         motor_dynamics=True,
         
-        reward_position=-2.0,
-        reward_velocity=-0.1,
-        reward_angular=-0.05,
-        reward_action=-0.01,
-        reward_alive=0.5,
-        reward_crash=-50.0,
-        reward_success=50.0
+        reward_position=-3.0,
+        reward_velocity=-0.2,
+        reward_angular=-0.1,
+        reward_action=-0.005,
+        reward_action_rate=-0.05,
+        reward_alive=1.0,
+        reward_crash=-100.0,
+        reward_success=100.0
     )
     
     trainer = Trainer(train_config, env_config)

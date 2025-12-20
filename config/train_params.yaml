@@ -1,46 +1,46 @@
 agent:
   type: td3
-  hidden_dim: 256
+  hidden_dim: 512
   lr_actor: 3.0e-4
   lr_critic: 3.0e-4
   gamma: 0.99
   tau: 0.005
 
 td3_specific:
-  policy_noise: 0.2
-  noise_clip: 0.5
+  policy_noise: 0.15
+  noise_clip: 0.4
   policy_delay: 2
 
 exploration:
-  noise: 0.1
-  noise_decay: 0.9999
-  noise_min: 0.01
+  noise: 0.25
+  noise_decay: 0.99998
+  noise_min: 0.05
 
 replay_buffer:
   size: 1000000
   use_per: true
-  per_alpha: 0.6
-  per_beta_start: 0.4
+  per_alpha: 0.7
+  per_beta_start: 0.5
 
 training:
   total_timesteps: 500000
-  batch_size: 256
+  batch_size: 512
   learning_starts: 10000
-  train_freq: 1
-  gradient_steps: 1
+  train_freq: 20
+  gradient_steps: 10
 
 evaluation:
-  freq: 5000
+  freq: 10000
   episodes: 10
 
 checkpointing:
-  save_freq: 25000
+  save_freq: 50000
   log_freq: 1000
   dir: checkpoints
 
 environment:
   dt: 0.02
-  max_steps: 500
+  max_steps: 1000
   num_envs: 1
   task: hover
   domain_randomization: true
@@ -53,14 +53,14 @@ observation:
   angular_velocity_scale: 10.0
 
 rewards:
-  position: -2.0
-  velocity: -0.1
-  angular: -0.05
-  action: -0.01
-  action_rate: -0.02
-  alive: 0.5
-  crash: -50.0
-  success: 50.0
+  position: -3.0
+  velocity: -0.2
+  angular: -0.1
+  action: -0.005
+  action_rate: -0.05
+  alive: 1.0
+  crash: -100.0
+  success: 100.0
 
 termination:
   crash_height: 0.05
