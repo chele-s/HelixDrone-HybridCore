@@ -139,19 +139,20 @@ class QuadrotorEnv(gym.Env):
         self._apply_domain_randomization()
         
         if self.task == TaskType.HOVER:
-            init_x = self._rng.uniform(-0.5, 0.5)
-            init_y = self._rng.uniform(-0.5, 0.5)
-            init_z = self._rng.uniform(0.2, 1.0)
+            init_x = self._rng.uniform(-0.3, 0.3)
+            init_y = self._rng.uniform(-0.3, 0.3)
+            init_z = self.target[2] + self._rng.uniform(-0.5, 0.5)
+            init_z = max(init_z, 1.0)
             self._drone.set_position(drone_core.Vec3(init_x, init_y, init_z))
             
-            init_vx = self._rng.uniform(-0.5, 0.5)
-            init_vy = self._rng.uniform(-0.5, 0.5)
-            init_vz = self._rng.uniform(-0.3, 0.3)
+            init_vx = self._rng.uniform(-0.2, 0.2)
+            init_vy = self._rng.uniform(-0.2, 0.2)
+            init_vz = self._rng.uniform(-0.1, 0.1)
             self._drone.set_velocity(drone_core.Vec3(init_vx, init_vy, init_vz))
             
-            roll = self._rng.uniform(-0.1, 0.1)
-            pitch = self._rng.uniform(-0.1, 0.1)
-            yaw = self._rng.uniform(-np.pi, np.pi)
+            roll = self._rng.uniform(-0.05, 0.05)
+            pitch = self._rng.uniform(-0.05, 0.05)
+            yaw = self._rng.uniform(-0.3, 0.3)
             self._drone.set_orientation(
                 drone_core.Quaternion.from_euler_zyx(roll, pitch, yaw)
             )
