@@ -298,11 +298,11 @@ def main():
     train_config = TrainConfig(
         agent_type='td3',
         total_timesteps=500_000,
-        batch_size=512,
+        batch_size=256,
         buffer_size=1_000_000,
-        learning_starts=10000,
-        train_freq=20,
-        gradient_steps=10,
+        learning_starts=5000,
+        train_freq=4,
+        gradient_steps=4,
         
         lr_actor=3e-4,
         lr_critic=3e-4,
@@ -312,9 +312,9 @@ def main():
         noise_clip=0.4,
         policy_delay=2,
         
-        exploration_noise=0.25,
-        exploration_noise_decay=0.99998,
-        exploration_noise_min=0.05,
+        exploration_noise=0.3,
+        exploration_noise_decay=0.99995,
+        exploration_noise_min=0.1,
         
         use_per=True,
         per_alpha=0.7,
@@ -330,19 +330,34 @@ def main():
     
     env_config = EnvConfig(
         dt=0.02,
-        max_steps=1000,
+        max_steps=2000,
         domain_randomization=False,
         wind_enabled=False,
-        motor_dynamics=True,
+        motor_dynamics=False,
         
-        reward_position=-2.0,
-        reward_velocity=-0.2,
-        reward_angular=-0.1,
-        reward_action=-0.005,
-        reward_action_rate=-0.01,
+        reward_position=-0.5,
+        reward_velocity=-0.02,
+        reward_angular=-0.01,
+        reward_action=-0.001,
+        reward_action_rate=-0.002,
         reward_alive=3.0,
-        reward_crash=-100.0,
-        reward_success=100.0
+        reward_crash=-5.0,
+        reward_success=100.0,
+        reward_height_bonus=1.0,
+        reward_stability_bonus=0.5,
+        reward_hover_bonus=5.0,
+        
+        crash_height=0.03,
+        crash_distance=15.0,
+        crash_angle=1.5,
+        success_distance=0.5,
+        success_velocity=0.5,
+        success_hold_steps=25,
+        
+        curriculum_enabled=True,
+        curriculum_init_range=0.1,
+        curriculum_max_range=1.0,
+        curriculum_progress_rate=0.00005
     )
     
     trainer = Trainer(train_config, env_config)

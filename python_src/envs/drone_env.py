@@ -22,30 +22,39 @@ class TaskType(IntEnum):
 class EnvConfig:
     dt: float = 0.02
     max_steps: int = 500
-    max_rpm: float = 20000.0
+    max_rpm: float = 8000.0
     min_rpm: float = 1000.0
-    hover_rpm: float = 14500.0
-    rpm_range: float = 5500.0
+    hover_rpm: float = 2600.0
+    rpm_range: float = 1500.0
     
     position_scale: float = 5.0
     velocity_scale: float = 5.0
     angular_velocity_scale: float = 10.0
     
-    reward_position: float = -2.0
-    reward_velocity: float = -0.1
-    reward_angular: float = -0.05
-    reward_action: float = -0.01
-    reward_action_rate: float = -0.02
-    reward_alive: float = 0.5
-    reward_crash: float = -50.0
+    reward_position: float = -1.0
+    reward_velocity: float = -0.05
+    reward_angular: float = -0.02
+    reward_action: float = -0.001
+    reward_action_rate: float = -0.005
+    reward_alive: float = 2.0
+    reward_crash: float = -10.0
     reward_success: float = 50.0
     
-    crash_height: float = 0.05
-    crash_distance: float = 8.0
-    crash_angle: float = 1.2
-    success_distance: float = 0.1
-    success_velocity: float = 0.2
-    success_hold_steps: int = 50
+    reward_height_bonus: float = 1.0
+    reward_stability_bonus: float = 0.5
+    reward_hover_bonus: float = 5.0
+    
+    crash_height: float = 0.03
+    crash_distance: float = 10.0
+    crash_angle: float = 1.4
+    success_distance: float = 0.3
+    success_velocity: float = 0.5
+    success_hold_steps: int = 25
+    
+    curriculum_enabled: bool = True
+    curriculum_init_range: float = 0.1
+    curriculum_max_range: float = 1.0
+    curriculum_progress_rate: float = 0.0001
     
     domain_randomization: bool = True
     wind_enabled: bool = True
@@ -84,6 +93,8 @@ class QuadrotorEnv(gym.Env):
         self._steps = 0
         self._episode_reward = 0.0
         self._rng = np.random.default_rng()
+        self._total_episodes = 0
+        self._curriculum_progress = 0.0
     
     def _setup_drone(self):
         self._cfg = drone_core.QuadrotorConfig()
@@ -138,21 +149,29 @@ class QuadrotorEnv(gym.Env):
         self._drone.reset()
         self._apply_domain_randomization()
         
+        if self.config.curriculum_enabled:
+            self._curriculum_progress = min(1.0, self._curriculum_progress + self.config.curriculum_progress_rate)
+            curr_range = self.config.curriculum_init_range + (
+                self.config.curriculum_max_range - self.config.curriculum_init_range
+            ) * self._curriculum_progress
+        else:
+            curr_range = self.config.curriculum_max_range
+        
         if self.task == TaskType.HOVER:
-            init_x = self._rng.uniform(-0.3, 0.3)
-            init_y = self._rng.uniform(-0.3, 0.3)
-            init_z = self.target[2] + self._rng.uniform(-0.5, 0.5)
-            init_z = max(init_z, 1.0)
+            init_x = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
+            init_y = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
+            init_z = self.target[2] + self._rng.uniform(-0.2 * curr_range, 0.2 * curr_range)
+            init_z = max(init_z, 0.5)
             self._drone.set_position(drone_core.Vec3(init_x, init_y, init_z))
             
-            init_vx = self._rng.uniform(-0.2, 0.2)
-            init_vy = self._rng.uniform(-0.2, 0.2)
-            init_vz = self._rng.uniform(-0.1, 0.1)
+            init_vx = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
+            init_vy = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
+            init_vz = self._rng.uniform(-0.05 * curr_range, 0.05 * curr_range)
             self._drone.set_velocity(drone_core.Vec3(init_vx, init_vy, init_vz))
             
-            roll = self._rng.uniform(-0.05, 0.05)
-            pitch = self._rng.uniform(-0.05, 0.05)
-            yaw = self._rng.uniform(-0.3, 0.3)
+            roll = self._rng.uniform(-0.02 * curr_range, 0.02 * curr_range)
+            pitch = self._rng.uniform(-0.02 * curr_range, 0.02 * curr_range)
+            yaw = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
             self._drone.set_orientation(
                 drone_core.Quaternion.from_euler_zyx(roll, pitch, yaw)
             )
@@ -165,10 +184,25 @@ class QuadrotorEnv(gym.Env):
                 self._rng.uniform(1, 4)
             ])
         
+        if self.config.motor_dynamics:
+            warmup_rpm = self.config.hover_rpm
+            warmup_cmd = drone_core.MotorCommand(warmup_rpm, warmup_rpm, warmup_rpm, warmup_rpm)
+            for _ in range(20):
+                self._drone.step(warmup_cmd, self.config.dt)
+            
+            if self.task == TaskType.HOVER:
+                init_x = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
+                init_y = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
+                init_z = self.target[2] + self._rng.uniform(-0.2 * curr_range, 0.2 * curr_range)
+                init_z = max(init_z, 0.5)
+                self._drone.set_position(drone_core.Vec3(init_x, init_y, init_z))
+                self._drone.set_velocity(drone_core.Vec3(0, 0, 0))
+        
         self._prev_action = np.zeros(4, dtype=np.float32)
         self._success_counter = 0
         self._steps = 0
         self._episode_reward = 0.0
+        self._total_episodes += 1
         
         return self._get_obs(), self._get_info()
     
@@ -224,6 +258,8 @@ class QuadrotorEnv(gym.Env):
         roll, pitch = abs(euler.x), abs(euler.y)
         
         dist = np.linalg.norm(self.target - pos)
+        dist_xy = np.linalg.norm(self.target[:2] - pos[:2])
+        dist_z = abs(self.target[2] - pos[2])
         speed = np.linalg.norm(vel)
         ang_speed = np.linalg.norm(ang_vel)
         
@@ -231,11 +267,25 @@ class QuadrotorEnv(gym.Env):
         action_rate_norm = np.linalg.norm(action - self._prev_action)
         
         reward = self.config.reward_alive
-        reward += self.config.reward_position * dist
-        reward += self.config.reward_velocity * speed
-        reward += self.config.reward_angular * ang_speed
+        
+        position_reward = np.exp(-dist * 0.5) - 1.0
+        reward += self.config.reward_position * (1.0 - position_reward)
+        
+        if pos[2] > 0.5:
+            height_bonus = min(1.0, pos[2] / self.target[2]) * self.config.reward_height_bonus
+            reward += height_bonus
+        
+        stability_factor = np.exp(-(roll + pitch) * 2.0)
+        reward += self.config.reward_stability_bonus * stability_factor
+        
+        reward += self.config.reward_velocity * min(speed, 5.0)
+        reward += self.config.reward_angular * min(ang_speed, 10.0)
         reward += self.config.reward_action * action_norm
         reward += self.config.reward_action_rate * action_rate_norm
+        
+        if dist < 1.0 and speed < 1.0:
+            hover_quality = (1.0 - dist) * (1.0 - speed) * stability_factor
+            reward += self.config.reward_hover_bonus * hover_quality
         
         terminated = False
         crashed = False
@@ -248,16 +298,18 @@ class QuadrotorEnv(gym.Env):
             crashed = True
 
         if crashed:
-            reward += self.config.reward_crash
+            survival_factor = min(1.0, self._steps / 100.0)
+            reward += self.config.reward_crash * (1.0 - 0.5 * survival_factor)
             terminated = True
         
         if not crashed and dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
+            reward += 2.0
             if self._success_counter >= self.config.success_hold_steps:
                 reward += self.config.reward_success
                 terminated = True
         else:
-            self._success_counter = 0
+            self._success_counter = max(0, self._success_counter - 1)
         
         return float(reward), terminated
     
