@@ -1,0 +1,74 @@
+agent:
+  type: td3
+  hidden_dim: 256
+  lr_actor: 3.0e-4
+  lr_critic: 3.0e-4
+  gamma: 0.99
+  tau: 0.005
+
+td3_specific:
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_delay: 2
+
+exploration:
+  noise: 0.1
+  noise_decay: 0.9999
+  noise_min: 0.01
+
+replay_buffer:
+  size: 1000000
+  use_per: true
+  per_alpha: 0.6
+  per_beta_start: 0.4
+
+training:
+  total_timesteps: 500000
+  batch_size: 256
+  learning_starts: 10000
+  train_freq: 1
+  gradient_steps: 1
+
+evaluation:
+  freq: 5000
+  episodes: 10
+
+checkpointing:
+  save_freq: 25000
+  log_freq: 1000
+  dir: checkpoints
+
+environment:
+  dt: 0.02
+  max_steps: 500
+  num_envs: 1
+  task: hover
+  domain_randomization: true
+  wind_enabled: true
+  motor_dynamics: true
+
+observation:
+  position_scale: 5.0
+  velocity_scale: 5.0
+  angular_velocity_scale: 10.0
+
+rewards:
+  position: -2.0
+  velocity: -0.1
+  angular: -0.05
+  action: -0.01
+  action_rate: -0.02
+  alive: 0.5
+  crash: -50.0
+  success: 50.0
+
+termination:
+  crash_height: 0.05
+  crash_distance: 8.0
+  crash_angle: 1.2
+  success_distance: 0.1
+  success_velocity: 0.2
+  success_hold_steps: 50
+
+seed: 42
+device: auto

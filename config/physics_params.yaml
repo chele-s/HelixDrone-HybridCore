@@ -1,0 +1,79 @@
+quadrotor:
+  mass: 1.0
+  arm_length: 0.25
+  ground_z: 0.0
+  ground_restitution: 0.3
+  ground_friction: 0.5
+
+inertia:
+  ixx: 0.0082
+  iyy: 0.0082
+  izz: 0.0144
+
+rotor:
+  radius: 0.127
+  chord: 0.02
+  pitch_angle: 0.26
+  lift_slope: 5.73
+  drag_coeff: 0.008
+  inflow_ratio: 0.05
+  num_blades: 2
+
+motor:
+  kv: 2300
+  max_current: 30.0
+  resistance: 0.042
+  torque_constant: 0.0042
+  efficiency: 0.85
+  inertia: 0.0001
+  friction_coeff: 0.0001
+
+battery:
+  nominal_voltage: 14.8
+  max_voltage: 16.8
+  min_voltage: 12.0
+  internal_resistance: 0.025
+  capacity_mah: 5200
+
+aero:
+  air_density: 1.225
+  parasitic_drag_area: 0.01
+  ground_effect_coeff: 0.5
+
+wind:
+  enabled: true
+  mean_speed: 5.0
+  turbulence_intensity: 0.15
+  altitude_reference: 100.0
+
+integration:
+  method: RK4
+  adaptive_tolerance_abs: 1.0e-6
+  adaptive_tolerance_rel: 1.0e-6
+  min_dt: 1.0e-6
+  max_dt: 0.1
+
+motor_configuration: X
+
+features:
+  ground_effect: true
+  wind_disturbance: true
+  motor_dynamics: true
+  battery_dynamics: false
+  imu_simulation: false
+
+imu:
+  accel_noise_stddev: 0.01
+  gyro_noise_stddev: 0.001
+  accel_bias: [0.0, 0.0, 0.0]
+  gyro_bias: [0.0, 0.0, 0.0]
+
+simulation:
+  dt: 0.02
+  gravity: 9.81
+
+limits:
+  max_rpm: 22000.0
+  min_rpm: 1000.0
+  hover_rpm: 14500.0
+  rpm_range: 7000.0
