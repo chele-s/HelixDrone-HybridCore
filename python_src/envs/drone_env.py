@@ -49,12 +49,12 @@ class EnvConfig:
     crash_angle: float = 1.4
     success_distance: float = 0.3
     success_velocity: float = 0.5
-    success_hold_steps: int = 25
+    success_hold_steps: int = 1000
     
     curriculum_enabled: bool = True
-    curriculum_init_range: float = 0.1
-    curriculum_max_range: float = 1.0
-    curriculum_progress_rate: float = 0.0001
+    curriculum_init_range: float = 0.05
+    curriculum_max_range: float = 0.5
+    curriculum_progress_rate: float = 0.00002
     
     domain_randomization: bool = True
     wind_enabled: bool = True
@@ -184,25 +184,20 @@ class QuadrotorEnv(gym.Env):
                 self._rng.uniform(1, 4)
             ])
         
-        if self.config.motor_dynamics:
-            warmup_rpm = self.config.hover_rpm
-            warmup_cmd = drone_core.MotorCommand(warmup_rpm, warmup_rpm, warmup_rpm, warmup_rpm)
-            for _ in range(20):
-                self._drone.step(warmup_cmd, self.config.dt)
-            
-            if self.task == TaskType.HOVER:
-                init_x = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
-                init_y = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
-                init_z = self.target[2] + self._rng.uniform(-0.2 * curr_range, 0.2 * curr_range)
-                init_z = max(init_z, 0.5)
-                self._drone.set_position(drone_core.Vec3(init_x, init_y, init_z))
-                self._drone.set_velocity(drone_core.Vec3(0, 0, 0))
-        
         self._prev_action = np.zeros(4, dtype=np.float32)
         self._success_counter = 0
         self._steps = 0
         self._episode_reward = 0.0
         self._total_episodes += 1
+        self._hover_duration = 0
+        
+        if self.config.motor_dynamics:
+            warmup_rpm = self.config.hover_rpm
+            warmup_cmd = drone_core.MotorCommand(warmup_rpm, warmup_rpm, warmup_rpm, warmup_rpm)
+            for _ in range(10):
+                self._drone.step(warmup_cmd, self.config.dt)
+            self._drone.set_velocity(drone_core.Vec3(0, 0, 0))
+            self._drone.set_angular_velocity(drone_core.Vec3(0, 0, 0))
         
         return self._get_obs(), self._get_info()
     
@@ -258,8 +253,6 @@ class QuadrotorEnv(gym.Env):
         roll, pitch = abs(euler.x), abs(euler.y)
         
         dist = np.linalg.norm(self.target - pos)
-        dist_xy = np.linalg.norm(self.target[:2] - pos[:2])
-        dist_z = abs(self.target[2] - pos[2])
         speed = np.linalg.norm(vel)
         ang_speed = np.linalg.norm(ang_vel)
         
@@ -268,24 +261,26 @@ class QuadrotorEnv(gym.Env):
         
         reward = self.config.reward_alive
         
-        position_reward = np.exp(-dist * 0.5) - 1.0
-        reward += self.config.reward_position * (1.0 - position_reward)
+        dist_reward = np.exp(-dist * 0.5)
+        reward += dist_reward * 2.0
         
-        if pos[2] > 0.5:
-            height_bonus = min(1.0, pos[2] / self.target[2]) * self.config.reward_height_bonus
-            reward += height_bonus
+        vel_reward = np.exp(-speed * 0.5)
+        reward += vel_reward * 0.5
         
-        stability_factor = np.exp(-(roll + pitch) * 2.0)
+        stability_factor = np.exp(-(roll + pitch) * 3.0)
         reward += self.config.reward_stability_bonus * stability_factor
         
-        reward += self.config.reward_velocity * min(speed, 5.0)
         reward += self.config.reward_angular * min(ang_speed, 10.0)
         reward += self.config.reward_action * action_norm
         reward += self.config.reward_action_rate * action_rate_norm
         
-        if dist < 1.0 and speed < 1.0:
-            hover_quality = (1.0 - dist) * (1.0 - speed) * stability_factor
-            reward += self.config.reward_hover_bonus * hover_quality
+        is_hovering = dist < 1.0 and speed < 1.0 and roll < 0.3 and pitch < 0.3
+        if is_hovering:
+            self._hover_duration += 1
+            hover_bonus = min(self._hover_duration / 50.0, 2.0) * self.config.reward_hover_bonus
+            reward += hover_bonus
+        else:
+            self._hover_duration = max(0, self._hover_duration - 2)
         
         terminated = False
         crashed = False
@@ -298,16 +293,13 @@ class QuadrotorEnv(gym.Env):
             crashed = True
 
         if crashed:
-            survival_factor = min(1.0, self._steps / 100.0)
-            reward += self.config.reward_crash * (1.0 - 0.5 * survival_factor)
+            survival_bonus = min(1.0, self._steps / 200.0)
+            reward += self.config.reward_crash * (1.0 - 0.3 * survival_bonus)
             terminated = True
         
-        if not crashed and dist < self.config.success_distance and speed < self.config.success_velocity:
+        if dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
-            reward += 2.0
-            if self._success_counter >= self.config.success_hold_steps:
-                reward += self.config.reward_success
-                terminated = True
+            reward += 1.0
         else:
             self._success_counter = max(0, self._success_counter - 1)
         

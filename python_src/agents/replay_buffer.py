@@ -207,29 +207,36 @@ class PrioritizedReplayBuffer:
         
         segment = self.tree.total_priority / batch_size
         
-        for i in range(batch_size):
-            low = segment * i
-            high = segment * (i + 1)
-            value = np.random.uniform(low, high)
-            
-            tree_idx, priority, data_idx = self.tree.get(value)
-            tree_indices[i] = tree_idx
-            priorities[i] = priority
-            indices[i] = data_idx
+        segment_starts = np.arange(batch_size) * segment
+        segment_ends = segment_starts + segment
+        values = np.random.uniform(segment_starts, segment_ends)
         
-        probabilities = priorities / self.tree.total_priority
+        for i in range(batch_size):
+            tree_idx, priority, data_idx = self.tree.get(values[i])
+            tree_indices[i] = tree_idx
+            priorities[i] = max(priority, 1e-8)
+            indices[i] = data_idx % self.capacity
+        
+        probabilities = priorities / max(self.tree.total_priority, 1e-8)
         weights = (self.size * probabilities) ** (-self.beta)
-        weights = weights / weights.max()
+        weights = weights / (weights.max() + 1e-8)
         
         self.frame += 1
         
+        states_batch = torch.as_tensor(self.states[indices], dtype=torch.float32, device=self.device)
+        actions_batch = torch.as_tensor(self.actions[indices], dtype=torch.float32, device=self.device)
+        rewards_batch = torch.as_tensor(self.rewards[indices], dtype=torch.float32, device=self.device)
+        next_states_batch = torch.as_tensor(self.next_states[indices], dtype=torch.float32, device=self.device)
+        dones_batch = torch.as_tensor(self.dones[indices], dtype=torch.float32, device=self.device)
+        weights_batch = torch.as_tensor(weights, dtype=torch.float32, device=self.device).unsqueeze(1)
+        
         return (
-            torch.FloatTensor(self.states[indices]).to(self.device),
-            torch.FloatTensor(self.actions[indices]).to(self.device),
-            torch.FloatTensor(self.rewards[indices]).to(self.device),
-            torch.FloatTensor(self.next_states[indices]).to(self.device),
-            torch.FloatTensor(self.dones[indices]).to(self.device),
-            torch.FloatTensor(weights).unsqueeze(1).to(self.device),
+            states_batch,
+            actions_batch,
+            rewards_batch,
+            next_states_batch,
+            dones_batch,
+            weights_batch,
             tree_indices
         )
     

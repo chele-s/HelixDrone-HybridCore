@@ -186,9 +186,7 @@ class Trainer:
                     action = self.env.action_space.sample()
             else:
                 if self.is_vectorized:
-                    action = np.array([
-                        self._get_action_with_noise(obs[i]) for i in range(self.config.num_envs)
-                    ])
+                    action = self.agent.get_actions_batch(obs, add_noise=True, noise_scale=self.exploration_noise)
                 else:
                     action = self._get_action_with_noise(obs)
             
@@ -325,39 +323,39 @@ def main():
         log_freq=1000,
         
         seed=42,
-        num_envs=1
+        num_envs=4
     )
     
     env_config = EnvConfig(
         dt=0.02,
-        max_steps=2000,
+        max_steps=500,
         domain_randomization=False,
         wind_enabled=False,
-        motor_dynamics=False,
+        motor_dynamics=True,
         
         reward_position=-0.5,
         reward_velocity=-0.02,
         reward_angular=-0.01,
         reward_action=-0.001,
         reward_action_rate=-0.002,
-        reward_alive=3.0,
+        reward_alive=2.0,
         reward_crash=-5.0,
         reward_success=100.0,
-        reward_height_bonus=1.0,
-        reward_stability_bonus=0.5,
-        reward_hover_bonus=5.0,
+        reward_height_bonus=0.5,
+        reward_stability_bonus=1.0,
+        reward_hover_bonus=3.0,
         
-        crash_height=0.03,
-        crash_distance=15.0,
-        crash_angle=1.5,
+        crash_height=0.05,
+        crash_distance=10.0,
+        crash_angle=1.2,
         success_distance=0.5,
         success_velocity=0.5,
-        success_hold_steps=25,
+        success_hold_steps=1000,
         
         curriculum_enabled=True,
-        curriculum_init_range=0.1,
-        curriculum_max_range=1.0,
-        curriculum_progress_rate=0.00005
+        curriculum_init_range=0.05,
+        curriculum_max_range=0.5,
+        curriculum_progress_rate=0.00002
     )
     
     trainer = Trainer(train_config, env_config)

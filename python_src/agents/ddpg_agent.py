@@ -116,19 +116,31 @@ class DDPGAgent:
         add_noise: bool = True,
         noise_scale: float = 1.0
     ) -> np.ndarray:
-        self.actor.eval()
-        
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
             action = self.actor(state_tensor).cpu().numpy()[0]
-        
-        self.actor.train()
         
         if add_noise and noise_scale > 0:
             noise = self.noise.sample() * noise_scale
             action = action + noise
         
         return np.clip(action, -self.max_action, self.max_action)
+    
+    def get_actions_batch(
+        self, 
+        states: np.ndarray, 
+        add_noise: bool = True,
+        noise_scale: float = 1.0
+    ) -> np.ndarray:
+        with torch.no_grad():
+            states_tensor = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+            actions = self.actor(states_tensor).cpu().numpy()
+        
+        if add_noise and noise_scale > 0:
+            noise = np.random.randn(*actions.shape) * noise_scale
+            actions = actions + noise
+        
+        return np.clip(actions, -self.max_action, self.max_action)
     
     def update(
         self, 
@@ -281,19 +293,31 @@ class TD3Agent:
         state: np.ndarray, 
         add_noise: bool = True
     ) -> np.ndarray:
-        self.actor.eval()
-        
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
             action = self.actor(state_tensor).cpu().numpy()[0]
-        
-        self.actor.train()
         
         if add_noise:
             noise = self.exploration_noise.sample()
             action = action + noise
         
         return np.clip(action, -self.max_action, self.max_action)
+    
+    def get_actions_batch(
+        self, 
+        states: np.ndarray, 
+        add_noise: bool = True,
+        noise_scale: float = 1.0
+    ) -> np.ndarray:
+        with torch.no_grad():
+            states_tensor = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+            actions = self.actor(states_tensor).cpu().numpy()
+        
+        if add_noise and noise_scale > 0:
+            noise = np.random.randn(*actions.shape) * noise_scale
+            actions = actions + noise
+        
+        return np.clip(actions, -self.max_action, self.max_action)
     
     def update(
         self, 
