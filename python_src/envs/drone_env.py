@@ -218,43 +218,37 @@ class QuadrotorEnv(gym.Env):
         
         pos = np.array([s.position.x, s.position.y, s.position.z])
         vel = np.array([s.velocity.x, s.velocity.y, s.velocity.z])
-        ang_vel = np.array([s.angular_velocity.x, s.angular_velocity.y, s.angular_velocity.z])
         
         euler = s.orientation.to_euler_zyx()
         roll, pitch = abs(euler.x), abs(euler.y)
         
         dist = np.linalg.norm(self.target - pos)
-        dist_xy = np.linalg.norm(self.target[:2] - pos[:2])
-        dist_z = abs(self.target[2] - pos[2])
         speed = np.linalg.norm(vel)
-        ang_speed = np.linalg.norm(ang_vel)
-        action_rate = np.linalg.norm(action - self._prev_action)
         
-        r_proximity = 2.0 * np.exp(-dist * dist)
-        r_height = 0.5 * np.exp(-dist_z * dist_z * 4.0)
-        r_upright = 0.3 * (1.0 - (roll + pitch) / self.config.crash_angle)
-        r_stable = -0.1 * speed - 0.05 * ang_speed
-        r_smooth = -0.02 * action_rate
+        r_alive = 1.0
+        r_proximity = 3.0 * np.exp(-dist * dist)
+        r_hover = 1.0 * np.exp(-speed * speed)
+        r_upright = 0.5 * np.exp(-4.0 * (roll * roll + pitch * pitch))
         
-        reward = r_proximity + r_height + r_upright + r_stable + r_smooth
+        reward = r_alive + r_proximity + r_hover + r_upright
         
         terminated = False
         
         if pos[2] < self.config.crash_height:
-            reward = self.config.reward_crash
+            reward = -10.0
             terminated = True
         elif dist > self.config.crash_distance:
-            reward = self.config.reward_crash
+            reward = -10.0
             terminated = True
         elif roll > self.config.crash_angle or pitch > self.config.crash_angle:
-            reward = self.config.reward_crash
+            reward = -10.0
             terminated = True
         
         if dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
-            reward += 2.0
+            reward += 5.0
             if self._success_counter >= self.config.success_hold_steps:
-                reward += self.config.reward_success
+                reward += 100.0
                 terminated = True
         else:
             self._success_counter = 0
