@@ -335,12 +335,12 @@ def main():
         wind_enabled=False,
         motor_dynamics=True,
         
-        reward_position=-3.0,
+        reward_position=-2.0,
         reward_velocity=-0.2,
         reward_angular=-0.1,
         reward_action=-0.005,
-        reward_action_rate=-0.05,
-        reward_alive=1.0,
+        reward_action_rate=-0.01,
+        reward_alive=3.0,
         reward_crash=-100.0,
         reward_success=100.0
     )
