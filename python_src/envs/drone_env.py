@@ -22,10 +22,10 @@ class TaskType(IntEnum):
 class EnvConfig:
     dt: float = 0.02
     max_steps: int = 500
-    max_rpm: float = 22000.0
+    max_rpm: float = 20000.0
     min_rpm: float = 1000.0
     hover_rpm: float = 14500.0
-    rpm_range: float = 7000.0
+    rpm_range: float = 5500.0
     
     position_scale: float = 5.0
     velocity_scale: float = 5.0
@@ -218,37 +218,43 @@ class QuadrotorEnv(gym.Env):
         
         pos = np.array([s.position.x, s.position.y, s.position.z])
         vel = np.array([s.velocity.x, s.velocity.y, s.velocity.z])
+        ang_vel = np.array([s.angular_velocity.x, s.angular_velocity.y, s.angular_velocity.z])
         
         euler = s.orientation.to_euler_zyx()
         roll, pitch = abs(euler.x), abs(euler.y)
         
         dist = np.linalg.norm(self.target - pos)
         speed = np.linalg.norm(vel)
+        ang_speed = np.linalg.norm(ang_vel)
         
-        r_alive = 1.0
-        r_proximity = 3.0 * np.exp(-dist * dist)
-        r_hover = 1.0 * np.exp(-speed * speed)
-        r_upright = 0.5 * np.exp(-4.0 * (roll * roll + pitch * pitch))
+        action_norm = np.linalg.norm(action)
+        action_rate_norm = np.linalg.norm(action - self._prev_action)
         
-        reward = r_alive + r_proximity + r_hover + r_upright
+        reward = self.config.reward_alive
+        reward += self.config.reward_position * dist
+        reward += self.config.reward_velocity * speed
+        reward += self.config.reward_angular * ang_speed
+        reward += self.config.reward_action * action_norm
+        reward += self.config.reward_action_rate * action_rate_norm
         
         terminated = False
+        crashed = False
         
         if pos[2] < self.config.crash_height:
-            reward = -10.0
-            terminated = True
+            crashed = True
         elif dist > self.config.crash_distance:
-            reward = -10.0
-            terminated = True
+            crashed = True
         elif roll > self.config.crash_angle or pitch > self.config.crash_angle:
-            reward = -10.0
+            crashed = True
+
+        if crashed:
+            reward += self.config.reward_crash
             terminated = True
         
-        if dist < self.config.success_distance and speed < self.config.success_velocity:
+        if not crashed and dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
-            reward += 5.0
             if self._success_counter >= self.config.success_hold_steps:
-                reward += 100.0
+                reward += self.config.reward_success
                 terminated = True
         else:
             self._success_counter = 0

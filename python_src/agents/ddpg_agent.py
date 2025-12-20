@@ -18,7 +18,7 @@ class OUNoise:
         mu: float = 0.0,
         theta: float = 0.15,
         sigma: float = 0.2,
-        dt: float = 1e-2
+        dt: float = 0.02
     ):
         self.action_dim = action_dim
         self.mu = mu
