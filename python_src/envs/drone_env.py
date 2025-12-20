@@ -224,19 +224,19 @@ class QuadrotorEnv(gym.Env):
         roll, pitch = abs(euler.x), abs(euler.y)
         
         dist = np.linalg.norm(self.target - pos)
+        dist_xy = np.linalg.norm(self.target[:2] - pos[:2])
+        dist_z = abs(self.target[2] - pos[2])
         speed = np.linalg.norm(vel)
         ang_speed = np.linalg.norm(ang_vel)
-        action_magnitude = np.linalg.norm(action)
         action_rate = np.linalg.norm(action - self._prev_action)
         
-        r_dist = self.config.reward_position * dist
-        r_vel = self.config.reward_velocity * speed
-        r_ang = self.config.reward_angular * ang_speed
-        r_action = self.config.reward_action * action_magnitude
-        r_rate = self.config.reward_action_rate * action_rate
-        r_alive = self.config.reward_alive
+        r_proximity = 2.0 * np.exp(-dist * dist)
+        r_height = 0.5 * np.exp(-dist_z * dist_z * 4.0)
+        r_upright = 0.3 * (1.0 - (roll + pitch) / self.config.crash_angle)
+        r_stable = -0.1 * speed - 0.05 * ang_speed
+        r_smooth = -0.02 * action_rate
         
-        reward = r_dist + r_vel + r_ang + r_action + r_rate + r_alive
+        reward = r_proximity + r_height + r_upright + r_stable + r_smooth
         
         terminated = False
         
@@ -252,7 +252,7 @@ class QuadrotorEnv(gym.Env):
         
         if dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
-            reward += 1.0
+            reward += 2.0
             if self._success_counter >= self.config.success_hold_steps:
                 reward += self.config.reward_success
                 terminated = True
