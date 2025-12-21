@@ -20,8 +20,8 @@ class TaskType(IntEnum):
 
 @dataclass
 class EnvConfig:
-    dt: float = 0.02
-    max_steps: int = 500
+    dt: float = 0.01
+    max_steps: int = 1000
     max_rpm: float = 8000.0
     min_rpm: float = 1000.0
     hover_rpm: float = 2600.0
@@ -31,18 +31,18 @@ class EnvConfig:
     velocity_scale: float = 5.0
     angular_velocity_scale: float = 10.0
     
-    reward_position: float = -1.0
-    reward_velocity: float = -0.05
-    reward_angular: float = -0.02
-    reward_action: float = -0.001
-    reward_action_rate: float = -0.005
-    reward_alive: float = 2.0
+    reward_position: float = -0.5
+    reward_velocity: float = -0.025
+    reward_angular: float = -0.01
+    reward_action: float = -0.0005
+    reward_action_rate: float = -0.0025
+    reward_alive: float = 1.0
     reward_crash: float = -10.0
     reward_success: float = 50.0
     
-    reward_height_bonus: float = 1.0
-    reward_stability_bonus: float = 0.5
-    reward_hover_bonus: float = 5.0
+    reward_height_bonus: float = 0.5
+    reward_stability_bonus: float = 0.25
+    reward_hover_bonus: float = 2.5
     
     crash_height: float = 0.03
     crash_distance: float = 10.0
@@ -262,10 +262,10 @@ class QuadrotorEnv(gym.Env):
         reward = self.config.reward_alive
         
         dist_reward = np.exp(-dist * 0.5)
-        reward += dist_reward * 2.0
+        reward += dist_reward * 1.0  # Scaled by 0.5
         
         vel_reward = np.exp(-speed * 0.5)
-        reward += vel_reward * 0.5
+        reward += vel_reward * 0.25  # Scaled by 0.5
         
         stability_factor = np.exp(-(roll + pitch) * 3.0)
         reward += self.config.reward_stability_bonus * stability_factor
@@ -299,7 +299,7 @@ class QuadrotorEnv(gym.Env):
         
         if dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
-            reward += 1.0
+            reward += 0.5  # Scaled by 0.5
         else:
             self._success_counter = max(0, self._success_counter - 1)
         
