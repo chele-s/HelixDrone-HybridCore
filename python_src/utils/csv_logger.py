@@ -48,16 +48,16 @@ class TelemetryFrame:
     
     def to_unity_dict(self, scale: float = 1.0) -> Dict[str, Any]:
         pos_unity = np.array([
-            self.position[0] * scale,
+            -self.position[1] * scale,
             self.position[2] * scale,
-            self.position[1] * scale
+            self.position[0] * scale
         ])
         
         quat_unity = np.array([
             self.orientation[0],
-            self.orientation[1],
+            -self.orientation[2],
             self.orientation[3],
-            self.orientation[2]
+            self.orientation[1]
         ])
         
         return {

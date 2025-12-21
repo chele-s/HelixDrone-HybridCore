@@ -295,10 +295,10 @@ class Trainer:
 def main():
     train_config = TrainConfig(
         agent_type='td3',
-        total_timesteps=500_000,
+        total_timesteps=1_000_000,
         batch_size=256,
         buffer_size=1_000_000,
-        learning_starts=5000,
+        learning_starts=10_000,
         train_freq=4,
         gradient_steps=4,
         
@@ -318,32 +318,32 @@ def main():
         per_alpha=0.7,
         per_beta_start=0.5,
         
-        eval_freq=10000,
-        save_freq=50000,
-        log_freq=1000,
+        eval_freq=20000,
+        save_freq=100000,
+        log_freq=2000,
         
         seed=42,
         num_envs=4
     )
     
     env_config = EnvConfig(
-        dt=0.02,
-        max_steps=500,
+        dt=0.01,
+        max_steps=1000,
         domain_randomization=False,
         wind_enabled=False,
         motor_dynamics=True,
         
-        reward_position=-0.5,
-        reward_velocity=-0.02,
-        reward_angular=-0.01,
-        reward_action=-0.001,
-        reward_action_rate=-0.002,
-        reward_alive=2.0,
+        reward_position=-0.25,
+        reward_velocity=-0.01,
+        reward_angular=-0.005,
+        reward_action=-0.0005,
+        reward_action_rate=-0.001,
+        reward_alive=1.0,
         reward_crash=-5.0,
         reward_success=100.0,
-        reward_height_bonus=0.5,
-        reward_stability_bonus=1.0,
-        reward_hover_bonus=3.0,
+        reward_height_bonus=0.25,
+        reward_stability_bonus=0.5,
+        reward_hover_bonus=1.5,
         
         crash_height=0.05,
         crash_distance=10.0,
