@@ -165,7 +165,7 @@ struct alignas(32) Quaternion {
     }
     
     Quaternion derivative(const Vec3& omega) const noexcept {
-        return Quaternion(0, omega.x, omega.y, omega.z) * (*this) * 0.5;
+        return (*this) * Quaternion(0, omega.x, omega.y, omega.z) * 0.5;
     }
 };
 

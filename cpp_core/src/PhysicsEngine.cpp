@@ -478,7 +478,7 @@ Quaternion PhysicsEngine::integrateQuaternion(const Quaternion& q, const Vec3& o
     double halfAngle = angle * 0.5;
     double s = std::sin(halfAngle);
     Quaternion deltaQ(std::cos(halfAngle), axis.x * s, axis.y * s, axis.z * s);
-    return (deltaQ * q).normalized();
+    return (q * deltaQ).normalized();
 }
 
 double PhysicsEngine::computeMotorRPM(

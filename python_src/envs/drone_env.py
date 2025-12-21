@@ -24,8 +24,8 @@ class EnvConfig:
     max_steps: int = 500
     max_rpm: float = 20000.0
     min_rpm: float = 1000.0
-    hover_rpm: float = 14500.0
-    rpm_range: float = 5500.0
+    hover_rpm: float = 7800.0
+    rpm_range: float = 8000.0
     
     position_scale: float = 5.0
     velocity_scale: float = 5.0
