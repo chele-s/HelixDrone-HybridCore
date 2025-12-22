@@ -5,6 +5,29 @@
 #include <random>
 #include <atomic>
 #include <stdexcept>
+#include <cstdlib>
+#include <new>
+
+#ifdef _WIN32
+#include <malloc.h>
+#define aligned_malloc(size, align) _aligned_malloc(size, align)
+#define aligned_free(ptr) _aligned_free(ptr)
+#else
+#include <cstdlib>
+#define aligned_malloc(size, align) std::aligned_alloc(align, size)
+#define aligned_free(ptr) std::free(ptr)
+#endif
+
+struct SubStepConfig {
+    int physicsSubSteps;
+    bool enableSubStepping;
+    double minSubStepDt;
+    double maxSubStepDt;
+    
+    constexpr SubStepConfig() noexcept
+        : physicsSubSteps(4), enableSubStepping(true)
+        , minSubStepDt(0.0001), maxSubStepDt(0.005) {}
+};
 
 struct QuadrotorConfig {
     double mass = 1.0;
@@ -18,6 +41,7 @@ struct QuadrotorConfig {
     BatteryConfig battery;
     AeroConfig aero;
     FuelConfig fuel;
+    SubStepConfig subStep;
     
     bool enableGroundEffect = true;
     bool enableWindDisturbance = false;
@@ -57,12 +81,33 @@ private:
     std::atomic<bool>& flag_;
 };
 
-class Quadrotor {
+class alignas(64) Quadrotor {
 public:
     Quadrotor() noexcept;
     explicit Quadrotor(const QuadrotorConfig& config) noexcept;
     
+    void* operator new(std::size_t size) {
+        void* ptr = aligned_malloc(size, 64);
+        if (!ptr) throw std::bad_alloc();
+        return ptr;
+    }
+    
+    void* operator new[](std::size_t size) {
+        void* ptr = aligned_malloc(size, 64);
+        if (!ptr) throw std::bad_alloc();
+        return ptr;
+    }
+    
+    void operator delete(void* ptr) noexcept {
+        aligned_free(ptr);
+    }
+    
+    void operator delete[](void* ptr) noexcept {
+        aligned_free(ptr);
+    }
+    
     void step(const MotorCommand& command, double dt);
+    void stepWithSubStepping(const MotorCommand& command, double agentDt);
     void stepAdaptive(const MotorCommand& command, double& dt);
     void reset() noexcept;
     
@@ -78,6 +123,7 @@ public:
     
     void setMotorConfiguration(MotorConfiguration config) noexcept;
     void setIntegrationMethod(IntegrationMethod method) noexcept;
+    void setSubStepConfig(const SubStepConfig& config) noexcept;
     
     void setWind(const Vec3& meanWind) noexcept;
     void enableFeature(const char* feature, bool enable) noexcept;
@@ -88,6 +134,7 @@ public:
     double getSimulationTime() const noexcept;
     double getCurrentMass() const noexcept;
     double getCurrentFuel() const noexcept;
+    int getSubStepCount() const noexcept;
     
     bool isIntegrating() const noexcept;
 
@@ -108,6 +155,7 @@ private:
     
     double simulationTime_;
     double totalFuelConsumed_;
+    int lastSubStepCount_;
     Vec3 lastForce_;
     Vec3 lastTorque_;
     Vec3 windVelocity_;
@@ -120,6 +168,7 @@ private:
     void initialize() noexcept;
     void checkNotIntegrating() const;
     void updateInertia() noexcept;
+    void stepInternal(const MotorCommand& command, double dt);
     
     RigidBodyDerivative computeDerivative(const RigidBodyState& rbState, double t) const;
     

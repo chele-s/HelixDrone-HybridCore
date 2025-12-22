@@ -8,7 +8,7 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(drone_core, m) {
-    m.doc() = "State-of-the-Art Quadrotor Physics Engine with SIMD, Blade Flapping, and Variable Mass";
+    m.doc() = "State-of-the-Art Quadrotor Physics Engine with SIMD, Blade Flapping, Variable Mass, and Sub-Stepping";
     
     py::class_<Vec3>(m, "Vec3")
         .def(py::init<>())
@@ -140,6 +140,13 @@ PYBIND11_MODULE(drone_core, m) {
         .value("COMBUSTION", PropulsionType::COMBUSTION)
         .value("HYBRID", PropulsionType::HYBRID);
     
+    py::class_<SubStepConfig>(m, "SubStepConfig")
+        .def(py::init<>())
+        .def_readwrite("physics_sub_steps", &SubStepConfig::physicsSubSteps)
+        .def_readwrite("enable_sub_stepping", &SubStepConfig::enableSubStepping)
+        .def_readwrite("min_sub_step_dt", &SubStepConfig::minSubStepDt)
+        .def_readwrite("max_sub_step_dt", &SubStepConfig::maxSubStepDt);
+    
     py::class_<ESCConfig>(m, "ESCConfig")
         .def(py::init<>())
         .def_readwrite("base_response_time", &ESCConfig::baseResponseTime)
@@ -225,6 +232,7 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("battery", &QuadrotorConfig::battery)
         .def_readwrite("aero", &QuadrotorConfig::aero)
         .def_readwrite("fuel", &QuadrotorConfig::fuel)
+        .def_readwrite("sub_step", &QuadrotorConfig::subStep)
         .def_readwrite("enable_ground_effect", &QuadrotorConfig::enableGroundEffect)
         .def_readwrite("enable_wind_disturbance", &QuadrotorConfig::enableWindDisturbance)
         .def_readwrite("enable_motor_dynamics", &QuadrotorConfig::enableMotorDynamics)
@@ -242,6 +250,7 @@ PYBIND11_MODULE(drone_core, m) {
         .def(py::init<>())
         .def(py::init<const QuadrotorConfig&>())
         .def("step", &Quadrotor::step)
+        .def("step_with_sub_stepping", &Quadrotor::stepWithSubStepping)
         .def("step_adaptive", &Quadrotor::stepAdaptive)
         .def("reset", &Quadrotor::reset)
         .def("get_state", &Quadrotor::getState)
@@ -254,6 +263,7 @@ PYBIND11_MODULE(drone_core, m) {
         .def("set_angular_velocity", &Quadrotor::setAngularVelocity)
         .def("set_motor_configuration", &Quadrotor::setMotorConfiguration)
         .def("set_integration_method", &Quadrotor::setIntegrationMethod)
+        .def("set_sub_step_config", &Quadrotor::setSubStepConfig)
         .def("set_wind", &Quadrotor::setWind)
         .def("enable_feature", &Quadrotor::enableFeature)
         .def("get_config", &Quadrotor::getConfig, py::return_value_policy::reference)
@@ -262,6 +272,7 @@ PYBIND11_MODULE(drone_core, m) {
         .def("get_simulation_time", &Quadrotor::getSimulationTime)
         .def("get_current_mass", &Quadrotor::getCurrentMass)
         .def("get_current_fuel", &Quadrotor::getCurrentFuel)
+        .def("get_sub_step_count", &Quadrotor::getSubStepCount)
         .def("is_integrating", &Quadrotor::isIntegrating);
     
     py::class_<PhysicsEngine>(m, "PhysicsEngine")

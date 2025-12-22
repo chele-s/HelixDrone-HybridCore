@@ -21,6 +21,7 @@ class TaskType(IntEnum):
 @dataclass
 class EnvConfig:
     dt: float = 0.01
+    physics_sub_steps: int = 4
     max_steps: int = 1000
     max_rpm: float = 8000.0
     min_rpm: float = 1000.0
@@ -44,6 +45,9 @@ class EnvConfig:
     reward_stability_bonus: float = 0.25
     reward_hover_bonus: float = 2.5
     
+    reward_saturation_penalty: float = -0.01
+    saturation_threshold: float = 0.95
+    
     crash_height: float = 0.03
     crash_distance: float = 10.0
     crash_angle: float = 1.4
@@ -59,6 +63,7 @@ class EnvConfig:
     domain_randomization: bool = True
     wind_enabled: bool = True
     motor_dynamics: bool = True
+    use_sub_stepping: bool = True
 
 
 class QuadrotorEnv(gym.Env):
@@ -95,6 +100,7 @@ class QuadrotorEnv(gym.Env):
         self._rng = np.random.default_rng()
         self._total_episodes = 0
         self._curriculum_progress = 0.0
+        self._saturation_count = 0
     
     def _setup_drone(self):
         self._cfg = drone_core.QuadrotorConfig()
@@ -104,6 +110,13 @@ class QuadrotorEnv(gym.Env):
         self._cfg.enable_wind_disturbance = self.config.wind_enabled
         self._cfg.enable_motor_dynamics = self.config.motor_dynamics
         self._cfg.enable_battery_dynamics = False
+        self._cfg.enable_blade_flapping = True
+        self._cfg.enable_advanced_aero = True
+        
+        self._cfg.sub_step.physics_sub_steps = self.config.physics_sub_steps
+        self._cfg.sub_step.enable_sub_stepping = self.config.use_sub_stepping
+        self._cfg.sub_step.min_sub_step_dt = 0.0001
+        self._cfg.sub_step.max_sub_step_dt = 0.005
         
         self._cfg.mass = 1.0
         self._cfg.arm_length = 0.25
@@ -111,9 +124,12 @@ class QuadrotorEnv(gym.Env):
         self._cfg.rotor.radius = 0.127
         self._cfg.rotor.chord = 0.02
         self._cfg.rotor.pitch_angle = 0.26
+        self._cfg.rotor.flapping.enabled = True
+        self._cfg.rotor.flapping.lock_number = 8.0
         
         self._cfg.motor.kv = 2300
         self._cfg.motor.max_current = 30
+        self._cfg.motor.esc.nonlinear_gamma = 1.2
         
         self._cfg.aero.air_density = 1.225
         self._cfg.aero.ground_effect_coeff = 0.5
@@ -190,12 +206,16 @@ class QuadrotorEnv(gym.Env):
         self._episode_reward = 0.0
         self._total_episodes += 1
         self._hover_duration = 0
+        self._saturation_count = 0
         
         if self.config.motor_dynamics:
             warmup_rpm = self.config.hover_rpm
             warmup_cmd = drone_core.MotorCommand(warmup_rpm, warmup_rpm, warmup_rpm, warmup_rpm)
             for _ in range(10):
-                self._drone.step(warmup_cmd, self.config.dt)
+                if self.config.use_sub_stepping:
+                    self._drone.step_with_sub_stepping(warmup_cmd, self.config.dt)
+                else:
+                    self._drone.step(warmup_cmd, self.config.dt)
             self._drone.set_velocity(drone_core.Vec3(0, 0, 0))
             self._drone.set_angular_velocity(drone_core.Vec3(0, 0, 0))
         
@@ -211,7 +231,11 @@ class QuadrotorEnv(gym.Env):
         rpm = np.clip(rpm, self.config.min_rpm, self.config.max_rpm)
         
         cmd = drone_core.MotorCommand(rpm[0], rpm[1], rpm[2], rpm[3])
-        self._drone.step(cmd, self.config.dt)
+        
+        if self.config.use_sub_stepping:
+            self._drone.step_with_sub_stepping(cmd, self.config.dt)
+        else:
+            self._drone.step(cmd, self.config.dt)
         
         self._steps += 1
         
@@ -262,10 +286,10 @@ class QuadrotorEnv(gym.Env):
         reward = self.config.reward_alive
         
         dist_reward = np.exp(-dist * 0.5)
-        reward += dist_reward * 1.0  # Scaled by 0.5
+        reward += dist_reward * 1.0
         
         vel_reward = np.exp(-speed * 0.5)
-        reward += vel_reward * 0.25  # Scaled by 0.5
+        reward += vel_reward * 0.25
         
         stability_factor = np.exp(-(roll + pitch) * 3.0)
         reward += self.config.reward_stability_bonus * stability_factor
@@ -273,6 +297,14 @@ class QuadrotorEnv(gym.Env):
         reward += self.config.reward_angular * min(ang_speed, 10.0)
         reward += self.config.reward_action * action_norm
         reward += self.config.reward_action_rate * action_rate_norm
+        
+        saturated_actions = np.sum(np.abs(action) > self.config.saturation_threshold)
+        if saturated_actions > 0:
+            self._saturation_count += 1
+            reward += self.config.reward_saturation_penalty * saturated_actions
+            
+            saturation_severity = np.sum(np.maximum(0, np.abs(action) - self.config.saturation_threshold))
+            reward += self.config.reward_saturation_penalty * saturation_severity * 2.0
         
         is_hovering = dist < 1.0 and speed < 1.0 and roll < 0.3 and pitch < 0.3
         if is_hovering:
@@ -299,7 +331,7 @@ class QuadrotorEnv(gym.Env):
         
         if dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
-            reward += 0.5  # Scaled by 0.5
+            reward += 0.5
         else:
             self._success_counter = max(0, self._success_counter - 1)
         
@@ -314,7 +346,9 @@ class QuadrotorEnv(gym.Env):
             'distance': np.linalg.norm(self.target - pos),
             'steps': self._steps,
             'episode_reward': self._episode_reward,
-            'success_counter': self._success_counter
+            'success_counter': self._success_counter,
+            'saturation_count': self._saturation_count,
+            'sub_step_count': self._drone.get_sub_step_count() if self.config.use_sub_stepping else 1
         }
     
     def set_target(self, target: np.ndarray):

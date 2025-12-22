@@ -6,7 +6,7 @@
 Quadrotor::Quadrotor() noexcept
     : config_(), motorState_(), motorDynamics_(), flappingState_(), massState_(), imuReading_()
     , physics_(IntegrationMethod::RK4), windModel_(), imuSim_()
-    , simulationTime_(0), totalFuelConsumed_(0), lastForce_(), lastTorque_(), windVelocity_()
+    , simulationTime_(0), totalFuelConsumed_(0), lastSubStepCount_(0), lastForce_(), lastTorque_(), windVelocity_()
     , integrating_(false) {
     initialize();
 }
@@ -14,7 +14,7 @@ Quadrotor::Quadrotor() noexcept
 Quadrotor::Quadrotor(const QuadrotorConfig& config) noexcept
     : config_(config), motorState_(), motorDynamics_(), flappingState_(), massState_(), imuReading_()
     , physics_(config.integrationMethod), windModel_(), imuSim_()
-    , simulationTime_(0), totalFuelConsumed_(0), lastForce_(), lastTorque_(), windVelocity_()
+    , simulationTime_(0), totalFuelConsumed_(0), lastSubStepCount_(0), lastForce_(), lastTorque_(), windVelocity_()
     , integrating_(false) {
     initialize();
 }
@@ -43,6 +43,7 @@ void Quadrotor::reset() noexcept {
     massState_.currentMass = config_.mass + config_.fuel.currentFuelMass;
     massState_.currentFuel = config_.fuel.currentFuelMass;
     totalFuelConsumed_ = 0;
+    lastSubStepCount_ = 0;
     simulationTime_ = 0;
     lastForce_ = Vec3();
     lastTorque_ = Vec3();
@@ -85,6 +86,10 @@ double Quadrotor::getCurrentMass() const noexcept {
 
 double Quadrotor::getCurrentFuel() const noexcept {
     return massState_.currentFuel;
+}
+
+int Quadrotor::getSubStepCount() const noexcept {
+    return lastSubStepCount_;
 }
 
 bool Quadrotor::isIntegrating() const noexcept {
@@ -146,6 +151,10 @@ void Quadrotor::setIntegrationMethod(IntegrationMethod method) noexcept {
     physics_.setIntegrationMethod(method);
 }
 
+void Quadrotor::setSubStepConfig(const SubStepConfig& config) noexcept {
+    config_.subStep = config;
+}
+
 void Quadrotor::setWind(const Vec3& meanWind) noexcept {
     windModel_.setWindSpeed(meanWind.norm());
 }
@@ -160,6 +169,7 @@ void Quadrotor::enableFeature(const char* feature, bool enable) noexcept {
     else if (std::strcmp(feature, "blade_flapping") == 0) config_.enableBladeFlapping = enable;
     else if (std::strcmp(feature, "variable_mass") == 0) config_.enableVariableMass = enable;
     else if (std::strcmp(feature, "advanced_aero") == 0) config_.enableAdvancedAero = enable;
+    else if (std::strcmp(feature, "sub_stepping") == 0) config_.subStep.enableSubStepping = enable;
 }
 
 void Quadrotor::updateMotorDynamics(const MotorCommand& command, double dt) noexcept {
@@ -331,9 +341,7 @@ RigidBodyDerivative Quadrotor::computeDerivative(const RigidBodyState& rbState, 
     return d;
 }
 
-void Quadrotor::step(const MotorCommand& command, double dt) {
-    IntegrationGuard guard(integrating_);
-    
+void Quadrotor::stepInternal(const MotorCommand& command, double dt) {
     updateMotorDynamics(command, dt);
     updateBattery();
     updateWind(dt);
@@ -364,6 +372,39 @@ void Quadrotor::step(const MotorCommand& command, double dt) {
     state_.time = simulationTime_;
     
     enforceGroundConstraint();
+}
+
+void Quadrotor::step(const MotorCommand& command, double dt) {
+    IntegrationGuard guard(integrating_);
+    
+    stepInternal(command, dt);
+    lastSubStepCount_ = 1;
+    
+    updateIMU();
+}
+
+void Quadrotor::stepWithSubStepping(const MotorCommand& command, double agentDt) {
+    IntegrationGuard guard(integrating_);
+    
+    if (!config_.subStep.enableSubStepping || config_.subStep.physicsSubSteps <= 1) {
+        stepInternal(command, agentDt);
+        lastSubStepCount_ = 1;
+        updateIMU();
+        return;
+    }
+    
+    int numSubSteps = config_.subStep.physicsSubSteps;
+    double physicsDt = agentDt / static_cast<double>(numSubSteps);
+    
+    physicsDt = std::clamp(physicsDt, config_.subStep.minSubStepDt, config_.subStep.maxSubStepDt);
+    numSubSteps = static_cast<int>(std::ceil(agentDt / physicsDt));
+    physicsDt = agentDt / static_cast<double>(numSubSteps);
+    
+    for (int i = 0; i < numSubSteps; ++i) {
+        stepInternal(command, physicsDt);
+    }
+    
+    lastSubStepCount_ = numSubSteps;
     updateIMU();
 }
 
