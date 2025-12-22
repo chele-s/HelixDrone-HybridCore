@@ -73,7 +73,7 @@ simulation:
   gravity: 9.81
 
 limits:
-  max_rpm: 22000.0
+  max_rpm: 20000.0
   min_rpm: 1000.0
   hover_rpm: 14500.0
   rpm_range: 7000.0

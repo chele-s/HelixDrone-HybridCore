@@ -329,9 +329,13 @@ def main():
     env_config = EnvConfig(
         dt=0.01,
         max_steps=1000,
-        domain_randomization=False,
-        wind_enabled=False,
+        domain_randomization=True,
+        wind_enabled=True,
         motor_dynamics=True,
+        max_rpm=20000.0,
+        min_rpm=1000.0,
+        hover_rpm=14500.0,
+        rpm_range=7000.0,
         
         reward_position=-0.25,
         reward_velocity=-0.01,
