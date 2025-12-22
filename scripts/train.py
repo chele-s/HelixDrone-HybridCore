@@ -15,6 +15,7 @@ import time
 
 from python_src.envs.drone_env import QuadrotorEnv, EnvConfig, TaskType, VectorizedQuadrotorEnv
 from python_src.agents import TD3Agent, DDPGAgent, PrioritizedReplayBuffer, ReplayBuffer, create_agent
+from python_src.utils.helix_math import RunningMeanStd
 
 
 @dataclass
@@ -37,13 +38,19 @@ class TrainConfig:
     noise_clip: float = 0.5
     policy_delay: int = 2
     
-    exploration_noise: float = 0.1
+    exploration_noise_start: float = 0.1
+    exploration_noise_end: float = 0.01
+    exploration_warmup_steps: int = 25000
     exploration_noise_decay: float = 0.9999
     exploration_noise_min: float = 0.01
     
     use_per: bool = True
     per_alpha: float = 0.6
     per_beta_start: float = 0.4
+    
+    use_obs_normalization: bool = True
+    obs_norm_clip: float = 10.0
+    obs_norm_update_freq: int = 100
     
     eval_freq: int = 5000
     eval_episodes: int = 10
@@ -82,6 +89,54 @@ class RollingStats:
         return np.mean(self.successes) if self.successes else 0.0
 
 
+class AdaptiveExplorationNoise:
+    def __init__(
+        self,
+        start_noise: float = 0.1,
+        end_noise: float = 0.01,
+        warmup_steps: int = 25000,
+        decay_rate: float = 0.9999,
+        min_noise: float = 0.01,
+        crash_penalty_factor: float = 1.5
+    ):
+        self.start_noise = start_noise
+        self.end_noise = end_noise
+        self.warmup_steps = warmup_steps
+        self.decay_rate = decay_rate
+        self.min_noise = min_noise
+        self.crash_penalty_factor = crash_penalty_factor
+        
+        self.current_noise = start_noise
+        self.steps = 0
+        self.recent_crashes = deque(maxlen=100)
+        self.warmup_complete = False
+    
+    def update(self, crashed: bool = False) -> float:
+        self.steps += 1
+        self.recent_crashes.append(float(crashed))
+        
+        if self.steps < self.warmup_steps:
+            progress = self.steps / self.warmup_steps
+            self.current_noise = self.start_noise + (self.end_noise - self.start_noise) * progress
+        else:
+            self.warmup_complete = True
+            self.current_noise = max(
+                self.min_noise,
+                self.current_noise * self.decay_rate
+            )
+        
+        crash_rate = np.mean(self.recent_crashes) if self.recent_crashes else 0.0
+        if crash_rate > 0.5 and self.steps > 1000:
+            reduction = 1.0 - (crash_rate - 0.5) * 0.5
+            self.current_noise *= max(0.5, reduction)
+        
+        return self.current_noise
+    
+    @property
+    def noise(self) -> float:
+        return self.current_noise
+
+
 class Trainer:
     def __init__(self, config: TrainConfig, env_config: Optional[EnvConfig] = None):
         self.config = config
@@ -92,6 +147,8 @@ class Trainer:
         self._setup_env()
         self._setup_agent()
         self._setup_buffer()
+        self._setup_normalization()
+        self._setup_exploration()
         self._setup_logging()
     
     def _setup_seed(self):
@@ -138,8 +195,6 @@ class Trainer:
             noise_clip=self.config.noise_clip,
             policy_delay=self.config.policy_delay
         )
-        
-        self.exploration_noise = self.config.exploration_noise
     
     def _setup_buffer(self):
         if self.config.use_per:
@@ -160,6 +215,21 @@ class Trainer:
                 action_dim=self.action_dim
             )
     
+    def _setup_normalization(self):
+        if self.config.use_obs_normalization:
+            self.obs_normalizer = RunningMeanStd(shape=(self.state_dim,))
+        else:
+            self.obs_normalizer = None
+    
+    def _setup_exploration(self):
+        self.exploration = AdaptiveExplorationNoise(
+            start_noise=self.config.exploration_noise_start,
+            end_noise=self.config.exploration_noise_end,
+            warmup_steps=self.config.exploration_warmup_steps,
+            decay_rate=self.config.exploration_noise_decay,
+            min_noise=self.config.exploration_noise_min
+        )
+    
     def _setup_logging(self):
         self.stats = RollingStats(window=100)
         self.best_eval_reward = float('-inf')
@@ -170,13 +240,28 @@ class Trainer:
         self.episodes = 0
         self.start_time = None
     
+    def _normalize_obs(self, obs: np.ndarray, update: bool = True) -> np.ndarray:
+        if self.obs_normalizer is None:
+            return obs
+        
+        if update and self.timesteps % self.config.obs_norm_update_freq == 0:
+            if obs.ndim == 1:
+                self.obs_normalizer.update(obs.reshape(1, -1))
+            else:
+                self.obs_normalizer.update(obs)
+        
+        return self.obs_normalizer.normalize(obs, clip=self.config.obs_norm_clip)
+    
     def train(self) -> Dict[str, List[float]]:
         self.start_time = time.time()
         history = {'rewards': [], 'eval_rewards': [], 'actor_loss': [], 'critic_loss': []}
         
         obs, _ = self.env.reset(seed=self.config.seed)
+        obs = self._normalize_obs(obs, update=True)
+        
         episode_reward = 0.0 if not self.is_vectorized else np.zeros(self.config.num_envs)
         episode_length = 0 if not self.is_vectorized else np.zeros(self.config.num_envs, dtype=int)
+        episode_crashes = np.zeros(self.config.num_envs, dtype=bool) if self.is_vectorized else False
         
         while self.timesteps < self.config.total_timesteps:
             if self.timesteps < self.config.learning_starts:
@@ -185,20 +270,31 @@ class Trainer:
                 else:
                     action = self.env.action_space.sample()
             else:
+                noise_scale = self.exploration.noise
                 if self.is_vectorized:
-                    action = self.agent.get_actions_batch(obs, add_noise=True, noise_scale=self.exploration_noise)
+                    action = self.agent.get_actions_batch(obs, add_noise=True, noise_scale=noise_scale)
                 else:
-                    action = self._get_action_with_noise(obs)
+                    action = self._get_action_with_noise(obs, noise_scale)
             
-            next_obs, reward, terminated, truncated, info = self.env.step(action)
+            next_obs_raw, reward, terminated, truncated, info = self.env.step(action)
+            next_obs = self._normalize_obs(next_obs_raw, update=True)
             
             if self.is_vectorized:
+                self.buffer.push_batch(
+                    states=obs if obs.ndim == 2 else obs.reshape(1, -1),
+                    actions=action if action.ndim == 2 else action.reshape(1, -1),
+                    rewards=reward if isinstance(reward, np.ndarray) else np.array([reward]),
+                    next_states=next_obs if next_obs.ndim == 2 else next_obs.reshape(1, -1),
+                    dones=terminated if isinstance(terminated, np.ndarray) else np.array([terminated])
+                )
+                
                 for i in range(self.config.num_envs):
-                    self.buffer.push(obs[i], action[i], reward[i], next_obs[i], terminated[i])
                     episode_reward[i] += reward[i]
                     episode_length[i] += 1
                     
                     if terminated[i] or truncated[i]:
+                        crashed = terminated[i] and episode_length[i] < 100
+                        self.exploration.update(crashed=crashed)
                         self.stats.add(episode_reward[i], episode_length[i])
                         history['rewards'].append(episode_reward[i])
                         self.episodes += 1
@@ -214,10 +310,13 @@ class Trainer:
                 self.timesteps += 1
                 
                 if done:
+                    crashed = terminated and episode_length < 100
+                    self.exploration.update(crashed=crashed)
                     self.stats.add(episode_reward, episode_length)
                     history['rewards'].append(episode_reward)
                     self.episodes += 1
-                    obs, _ = self.env.reset()
+                    obs_raw, _ = self.env.reset()
+                    obs = self._normalize_obs(obs_raw, update=True)
                     episode_reward = 0.0
                     episode_length = 0
                     self.agent.reset_noise()
@@ -232,11 +331,6 @@ class Trainer:
                         if metrics:
                             history['actor_loss'].append(metrics.get('actor_loss', 0))
                             history['critic_loss'].append(metrics.get('critic_loss', 0))
-                
-                self.exploration_noise = max(
-                    self.config.exploration_noise_min,
-                    self.exploration_noise * self.config.exploration_noise_decay
-                )
             
             if self.timesteps % self.config.log_freq == 0:
                 self._log_progress()
@@ -251,13 +345,15 @@ class Trainer:
             
             if self.timesteps % self.config.save_freq == 0:
                 self.agent.save(self.checkpoint_dir / f'step_{self.timesteps}')
+                self._save_normalizer()
         
         self.agent.save(self.checkpoint_dir / 'final')
+        self._save_normalizer()
         return history
     
-    def _get_action_with_noise(self, obs: np.ndarray) -> np.ndarray:
+    def _get_action_with_noise(self, obs: np.ndarray, noise_scale: float) -> np.ndarray:
         action = self.agent.get_action(obs, add_noise=False)
-        noise = np.random.randn(self.action_dim) * self.exploration_noise
+        noise = np.random.randn(self.action_dim) * noise_scale
         action = np.clip(action + noise, -1.0, 1.0)
         return action
     
@@ -265,12 +361,14 @@ class Trainer:
         total_reward = 0.0
         
         for _ in range(self.config.eval_episodes):
-            obs, _ = self.eval_env.reset()
+            obs_raw, _ = self.eval_env.reset()
+            obs = self._normalize_obs(obs_raw, update=False)
             done = False
             
             while not done:
                 action = self.agent.get_action(obs, add_noise=False)
-                obs, reward, terminated, truncated, _ = self.eval_env.step(action)
+                obs_raw, reward, terminated, truncated, _ = self.eval_env.step(action)
+                obs = self._normalize_obs(obs_raw, update=False)
                 total_reward += reward
                 done = terminated or truncated
         
@@ -287,9 +385,25 @@ class Trainer:
             f"Episodes: {self.episodes:>5} | "
             f"Reward: {self.stats.mean_reward:>8.2f} | "
             f"Length: {self.stats.mean_length:>6.1f} | "
-            f"Noise: {self.exploration_noise:.3f} | "
+            f"Noise: {self.exploration.noise:.3f} | "
             f"FPS: {fps:.0f}"
         )
+    
+    def _save_normalizer(self):
+        if self.obs_normalizer is not None:
+            np.savez(
+                self.checkpoint_dir / 'obs_normalizer.npz',
+                mean=self.obs_normalizer.mean,
+                var=self.obs_normalizer.var,
+                count=self.obs_normalizer.count
+            )
+    
+    def load_normalizer(self, path: Path):
+        if self.obs_normalizer is not None:
+            data = np.load(path)
+            self.obs_normalizer.mean = data['mean']
+            self.obs_normalizer.var = data['var']
+            self.obs_normalizer.count = data['count']
 
 
 def main():
@@ -310,13 +424,19 @@ def main():
         noise_clip=0.4,
         policy_delay=2,
         
-        exploration_noise=0.3,
+        exploration_noise_start=0.15,
+        exploration_noise_end=0.05,
+        exploration_warmup_steps=50000,
         exploration_noise_decay=0.99995,
-        exploration_noise_min=0.1,
+        exploration_noise_min=0.02,
         
         use_per=True,
         per_alpha=0.7,
         per_beta_start=0.5,
+        
+        use_obs_normalization=True,
+        obs_norm_clip=10.0,
+        obs_norm_update_freq=100,
         
         eval_freq=20000,
         save_freq=100000,
@@ -328,6 +448,8 @@ def main():
     
     env_config = EnvConfig(
         dt=0.01,
+        physics_sub_steps=4,
+        use_sub_stepping=True,
         max_steps=1000,
         domain_randomization=False,
         wind_enabled=False,
@@ -344,6 +466,9 @@ def main():
         reward_height_bonus=0.25,
         reward_stability_bonus=0.5,
         reward_hover_bonus=1.5,
+        
+        reward_saturation_penalty=-0.01,
+        saturation_threshold=0.95,
         
         crash_height=0.05,
         crash_distance=10.0,
@@ -367,6 +492,8 @@ def main():
     print(f"State dim: {trainer.state_dim}, Action dim: {trainer.action_dim}")
     print(f"Agent: {train_config.agent_type.upper()}")
     print(f"Buffer: {'PER' if train_config.use_per else 'Uniform'}")
+    print(f"Observation Normalization: {'Enabled' if train_config.use_obs_normalization else 'Disabled'}")
+    print(f"Exploration: warmup={train_config.exploration_warmup_steps}, start={train_config.exploration_noise_start}")
     print(f"Total timesteps: {train_config.total_timesteps:,}")
     print("=" * 60)
     

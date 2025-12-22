@@ -49,6 +49,50 @@ class ReplayBuffer:
         else:
             self.buffer.append((state, action, reward, next_state, done))
     
+    def push_batch(
+        self,
+        states: np.ndarray,
+        actions: np.ndarray,
+        rewards: np.ndarray,
+        next_states: np.ndarray,
+        dones: np.ndarray
+    ) -> None:
+        batch_size = states.shape[0]
+        
+        if self._preallocated:
+            end_ptr = self.ptr + batch_size
+            
+            if end_ptr <= self.capacity:
+                self.states[self.ptr:end_ptr] = states
+                self.actions[self.ptr:end_ptr] = actions
+                self.rewards[self.ptr:end_ptr] = rewards.reshape(-1, 1)
+                self.next_states[self.ptr:end_ptr] = next_states
+                self.dones[self.ptr:end_ptr] = dones.reshape(-1, 1).astype(np.float32)
+            else:
+                first_part = self.capacity - self.ptr
+                second_part = end_ptr - self.capacity
+                
+                self.states[self.ptr:] = states[:first_part]
+                self.states[:second_part] = states[first_part:]
+                
+                self.actions[self.ptr:] = actions[:first_part]
+                self.actions[:second_part] = actions[first_part:]
+                
+                self.rewards[self.ptr:] = rewards[:first_part].reshape(-1, 1)
+                self.rewards[:second_part] = rewards[first_part:].reshape(-1, 1)
+                
+                self.next_states[self.ptr:] = next_states[:first_part]
+                self.next_states[:second_part] = next_states[first_part:]
+                
+                self.dones[self.ptr:] = dones[:first_part].reshape(-1, 1).astype(np.float32)
+                self.dones[:second_part] = dones[first_part:].reshape(-1, 1).astype(np.float32)
+            
+            self.ptr = end_ptr % self.capacity
+            self.size = min(self.size + batch_size, self.capacity)
+        else:
+            for i in range(batch_size):
+                self.buffer.append((states[i], actions[i], rewards[i], next_states[i], dones[i]))
+    
     def sample(
         self, 
         batch_size: int
@@ -98,6 +142,10 @@ class SumTree:
             tree_idx = (tree_idx - 1) // 2
             self.tree[tree_idx] += change
     
+    def update_batch(self, tree_indices: np.ndarray, priorities: np.ndarray) -> None:
+        for tree_idx, priority in zip(tree_indices, priorities):
+            self.update(tree_idx, priority)
+    
     def add(self, priority: float) -> int:
         tree_idx = self.data_pointer + self.capacity - 1
         self.update(tree_idx, priority)
@@ -106,6 +154,15 @@ class SumTree:
         self.data_pointer = (self.data_pointer + 1) % self.capacity
         
         return data_idx
+    
+    def add_batch(self, priorities: np.ndarray) -> np.ndarray:
+        batch_size = len(priorities)
+        data_indices = np.zeros(batch_size, dtype=np.int32)
+        
+        for i, priority in enumerate(priorities):
+            data_indices[i] = self.add(priority)
+        
+        return data_indices
     
     def get(self, value: float) -> Tuple[int, float, int]:
         parent_idx = 0
@@ -196,6 +253,28 @@ class PrioritizedReplayBuffer:
         
         self.size = min(self.size + 1, self.capacity)
     
+    def push_batch(
+        self,
+        states: np.ndarray,
+        actions: np.ndarray,
+        rewards: np.ndarray,
+        next_states: np.ndarray,
+        dones: np.ndarray
+    ) -> None:
+        batch_size = states.shape[0]
+        priority = self.max_priority ** self.alpha
+        priorities = np.full(batch_size, priority, dtype=np.float64)
+        
+        data_indices = self.tree.add_batch(priorities)
+        
+        self.states[data_indices] = states
+        self.actions[data_indices] = actions
+        self.rewards[data_indices] = rewards.reshape(-1, 1)
+        self.next_states[data_indices] = next_states
+        self.dones[data_indices] = dones.reshape(-1, 1).astype(np.float32)
+        
+        self.size = min(self.size + batch_size, self.capacity)
+    
     def sample(
         self, 
         batch_size: int
@@ -246,10 +325,7 @@ class PrioritizedReplayBuffer:
         td_errors: np.ndarray
     ) -> None:
         priorities = (np.abs(td_errors) + self.epsilon) ** self.alpha
-        
-        for tree_idx, priority in zip(tree_indices, priorities):
-            self.tree.update(tree_idx, priority)
-        
+        self.tree.update_batch(tree_indices, priorities)
         self.max_priority = max(self.max_priority, priorities.max())
     
     def __len__(self) -> int:
