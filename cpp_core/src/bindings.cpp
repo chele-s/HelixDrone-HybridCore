@@ -2,8 +2,10 @@
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
 #include <pybind11/operators.h>
+#include <pybind11/numpy.h>
 #include "Quadrotor.h"
 #include "PhysicsEngine.h"
+#include "ReplayBuffer.h"
 
 namespace py = pybind11;
 
@@ -319,4 +321,132 @@ PYBIND11_MODULE(drone_core, m) {
     
     py::class_<VariableMassModel>(m, "VariableMassModel")
         .def_static("compute_inertia_with_fuel", &VariableMassModel::computeInertiaWithFuel);
+    
+    py::class_<helix::SumTree>(m, "SumTree")
+        .def(py::init<size_t>())
+        .def("update", &helix::SumTree::update)
+        .def("add", &helix::SumTree::add)
+        .def("get", [](const helix::SumTree& self, double value) {
+            size_t treeIdx, dataIdx;
+            double priority;
+            self.get(value, treeIdx, priority, dataIdx);
+            return py::make_tuple(treeIdx, priority, dataIdx);
+        })
+        .def("total_priority", &helix::SumTree::totalPriority)
+        .def("max_priority", &helix::SumTree::maxPriority)
+        .def("min_priority", &helix::SumTree::minPriority)
+        .def("capacity", &helix::SumTree::capacity);
+    
+    py::class_<helix::PrioritizedReplayBuffer>(m, "PrioritizedReplayBuffer")
+        .def(py::init<size_t, size_t, size_t, double, double, size_t, double>(),
+            py::arg("capacity"),
+            py::arg("state_dim"),
+            py::arg("action_dim"),
+            py::arg("alpha") = 0.6,
+            py::arg("beta_start") = 0.4,
+            py::arg("beta_frames") = 100000,
+            py::arg("epsilon") = 1e-6)
+        .def("beta", &helix::PrioritizedReplayBuffer::beta)
+        .def("push", [](helix::PrioritizedReplayBuffer& self, 
+                        py::array_t<float, py::array::c_style | py::array::forcecast> state, 
+                        py::array_t<float, py::array::c_style | py::array::forcecast> action, 
+                        float reward, 
+                        py::array_t<float, py::array::c_style | py::array::forcecast> next_state, 
+                        float done) {
+            self.push(state.data(), action.data(), reward, next_state.data(), done);
+        })
+        .def("push_batch", [](helix::PrioritizedReplayBuffer& self,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> states,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> actions,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> rewards,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> next_states,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> dones) {
+            self.pushBatch(states.data(), actions.data(), rewards.data(), 
+                          next_states.data(), dones.data(), static_cast<size_t>(states.shape(0)));
+        })
+        .def("sample", [](helix::PrioritizedReplayBuffer& self, size_t batchSize) {
+            auto result = self.sample(batchSize);
+            
+            py::array_t<float> states({batchSize, result.stateDim});
+            py::array_t<float> actions({batchSize, result.actionDim});
+            py::array_t<float> rewards({batchSize, size_t(1)});
+            py::array_t<float> next_states({batchSize, result.stateDim});
+            py::array_t<float> dones({batchSize, size_t(1)});
+            py::array_t<float> weights({batchSize, size_t(1)});
+            py::array_t<int32_t> tree_indices({batchSize});
+            
+            std::memcpy(states.mutable_data(), result.states.data(), batchSize * result.stateDim * sizeof(float));
+            std::memcpy(actions.mutable_data(), result.actions.data(), batchSize * result.actionDim * sizeof(float));
+            std::memcpy(next_states.mutable_data(), result.nextStates.data(), batchSize * result.stateDim * sizeof(float));
+            std::memcpy(tree_indices.mutable_data(), result.treeIndices.data(), batchSize * sizeof(int32_t));
+            
+            float* rPtr = rewards.mutable_data();
+            float* dPtr = dones.mutable_data();
+            float* wPtr = weights.mutable_data();
+            for (size_t i = 0; i < batchSize; ++i) {
+                rPtr[i] = result.rewards[i];
+                dPtr[i] = result.dones[i];
+                wPtr[i] = result.weights[i];
+            }
+            
+            return py::make_tuple(states, actions, rewards, next_states, dones, weights, tree_indices);
+        })
+        .def("update_priorities", [](helix::PrioritizedReplayBuffer& self,
+                                     py::array_t<int32_t, py::array::c_style | py::array::forcecast> tree_indices,
+                                     py::array_t<double, py::array::c_style | py::array::forcecast> td_errors) {
+            self.updatePriorities(tree_indices.data(), td_errors.data(), static_cast<size_t>(tree_indices.size()));
+        })
+        .def("size", &helix::PrioritizedReplayBuffer::size)
+        .def("capacity", &helix::PrioritizedReplayBuffer::capacity)
+        .def("is_ready", &helix::PrioritizedReplayBuffer::isReady)
+        .def("__len__", &helix::PrioritizedReplayBuffer::size);
+    
+    py::class_<helix::UniformReplayBuffer>(m, "UniformReplayBuffer")
+        .def(py::init<size_t, size_t, size_t>(),
+            py::arg("capacity"),
+            py::arg("state_dim"),
+            py::arg("action_dim"))
+        .def("push", [](helix::UniformReplayBuffer& self, 
+                        py::array_t<float, py::array::c_style | py::array::forcecast> state, 
+                        py::array_t<float, py::array::c_style | py::array::forcecast> action, 
+                        float reward, 
+                        py::array_t<float, py::array::c_style | py::array::forcecast> next_state, 
+                        float done) {
+            self.push(state.data(), action.data(), reward, next_state.data(), done);
+        })
+        .def("push_batch", [](helix::UniformReplayBuffer& self,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> states,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> actions,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> rewards,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> next_states,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> dones) {
+            self.pushBatch(states.data(), actions.data(), rewards.data(), 
+                          next_states.data(), dones.data(), static_cast<size_t>(states.shape(0)));
+        })
+        .def("sample", [](helix::UniformReplayBuffer& self, size_t batchSize, size_t stateDim, size_t actionDim) {
+            auto result = self.sample(batchSize);
+            
+            py::array_t<float> states({batchSize, stateDim});
+            py::array_t<float> actions({batchSize, actionDim});
+            py::array_t<float> rewards({batchSize, size_t(1)});
+            py::array_t<float> next_states({batchSize, stateDim});
+            py::array_t<float> dones({batchSize, size_t(1)});
+            
+            std::memcpy(states.mutable_data(), result.states.data(), batchSize * stateDim * sizeof(float));
+            std::memcpy(actions.mutable_data(), result.actions.data(), batchSize * actionDim * sizeof(float));
+            std::memcpy(next_states.mutable_data(), result.nextStates.data(), batchSize * stateDim * sizeof(float));
+            
+            float* rPtr = rewards.mutable_data();
+            float* dPtr = dones.mutable_data();
+            for (size_t i = 0; i < batchSize; ++i) {
+                rPtr[i] = result.rewards[i];
+                dPtr[i] = result.dones[i];
+            }
+            
+            return py::make_tuple(states, actions, rewards, next_states, dones);
+        })
+        .def("size", &helix::UniformReplayBuffer::size)
+        .def("capacity", &helix::UniformReplayBuffer::capacity)
+        .def("is_ready", &helix::UniformReplayBuffer::isReady)
+        .def("__len__", &helix::UniformReplayBuffer::size);
 }

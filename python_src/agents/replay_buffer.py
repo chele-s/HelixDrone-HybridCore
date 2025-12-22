@@ -409,3 +409,123 @@ class NStepReplayBuffer:
     
     def is_ready(self, batch_size: int) -> bool:
         return self.main_buffer.is_ready(batch_size)
+
+
+try:
+    import drone_core as _cpp_core
+    _HAS_CPP_BUFFER = hasattr(_cpp_core, 'PrioritizedReplayBuffer')
+except ImportError:
+    _HAS_CPP_BUFFER = False
+
+
+class CppPrioritizedReplayBuffer:
+    def __init__(
+        self,
+        capacity: int,
+        device: torch.device,
+        state_dim: int,
+        action_dim: int,
+        alpha: float = 0.6,
+        beta_start: float = 0.4,
+        beta_frames: int = 100000,
+        epsilon: float = 1e-6
+    ):
+        self.device = device
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        
+        if _HAS_CPP_BUFFER:
+            self._cpp_buffer = _cpp_core.PrioritizedReplayBuffer(
+                capacity, state_dim, action_dim, alpha, beta_start, beta_frames, epsilon
+            )
+            self._use_cpp = True
+        else:
+            self._py_buffer = PrioritizedReplayBuffer(
+                capacity, device, state_dim, action_dim, alpha, beta_start, beta_frames, epsilon
+            )
+            self._use_cpp = False
+    
+    def push(
+        self,
+        state: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_state: np.ndarray,
+        done: bool
+    ) -> None:
+        if self._use_cpp:
+            self._cpp_buffer.push(
+                state.astype(np.float32),
+                action.astype(np.float32),
+                float(reward),
+                next_state.astype(np.float32),
+                float(done)
+            )
+        else:
+            self._py_buffer.push(state, action, reward, next_state, done)
+    
+    def push_batch(
+        self,
+        states: np.ndarray,
+        actions: np.ndarray,
+        rewards: np.ndarray,
+        next_states: np.ndarray,
+        dones: np.ndarray
+    ) -> None:
+        if self._use_cpp:
+            self._cpp_buffer.push_batch(
+                states.astype(np.float32),
+                actions.astype(np.float32),
+                rewards.astype(np.float32).flatten(),
+                next_states.astype(np.float32),
+                dones.astype(np.float32).flatten()
+            )
+        else:
+            self._py_buffer.push_batch(states, actions, rewards, next_states, dones)
+    
+    def sample(
+        self, 
+        batch_size: int
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, 
+               torch.Tensor, torch.Tensor, torch.Tensor, np.ndarray]:
+        if self._use_cpp:
+            states, actions, rewards, next_states, dones, weights, tree_indices = \
+                self._cpp_buffer.sample(batch_size)
+            return (
+                torch.as_tensor(states, dtype=torch.float32, device=self.device),
+                torch.as_tensor(actions, dtype=torch.float32, device=self.device),
+                torch.as_tensor(rewards, dtype=torch.float32, device=self.device),
+                torch.as_tensor(next_states, dtype=torch.float32, device=self.device),
+                torch.as_tensor(dones, dtype=torch.float32, device=self.device),
+                torch.as_tensor(weights, dtype=torch.float32, device=self.device),
+                tree_indices
+            )
+        else:
+            return self._py_buffer.sample(batch_size)
+    
+    def update_priorities(
+        self, 
+        tree_indices: np.ndarray, 
+        td_errors: np.ndarray
+    ) -> None:
+        if self._use_cpp:
+            self._cpp_buffer.update_priorities(
+                tree_indices.astype(np.int32),
+                td_errors.astype(np.float64)
+            )
+        else:
+            self._py_buffer.update_priorities(tree_indices, td_errors)
+    
+    def __len__(self) -> int:
+        if self._use_cpp:
+            return self._cpp_buffer.size()
+        return len(self._py_buffer)
+    
+    def is_ready(self, batch_size: int) -> bool:
+        if self._use_cpp:
+            return self._cpp_buffer.is_ready(batch_size)
+        return self._py_buffer.is_ready(batch_size)
+    
+    @property
+    def using_cpp(self) -> bool:
+        return self._use_cpp
