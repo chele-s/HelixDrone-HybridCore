@@ -1,10 +1,12 @@
 #pragma once
 #include "Types.h"
+#include "SIMDMath.h"
 #include <functional>
 #include <array>
 #include <cmath>
 #include <random>
 #include <algorithm>
+#include <atomic>
 
 enum class IntegrationMethod {
     EULER,
@@ -24,6 +26,70 @@ enum class RotorDirection {
     CCW
 };
 
+enum class PropulsionType {
+    ELECTRIC,
+    COMBUSTION,
+    HYBRID
+};
+
+struct ESCConfig {
+    double baseResponseTime;
+    double minResponseTime;
+    double maxResponseTime;
+    double nonlinearGamma;
+    double voltageScaleFactor;
+    double currentLimitSoftness;
+    double thermalCoeff;
+    double pwmFrequency;
+    
+    constexpr ESCConfig() noexcept
+        : baseResponseTime(0.02), minResponseTime(0.005), maxResponseTime(0.1)
+        , nonlinearGamma(1.2), voltageScaleFactor(1.0), currentLimitSoftness(0.1)
+        , thermalCoeff(0.001), pwmFrequency(32000) {}
+};
+
+struct BladeFlappingConfig {
+    double hingeOffset;
+    double lockNumber;
+    double flapFrequency;
+    double pitchFlapCoupling;
+    double rollFlapCoupling;
+    double advanceRatioThreshold;
+    bool enabled;
+    
+    constexpr BladeFlappingConfig() noexcept
+        : hingeOffset(0.05), lockNumber(8.0), flapFrequency(15.0)
+        , pitchFlapCoupling(0.6), rollFlapCoupling(0.6)
+        , advanceRatioThreshold(0.05), enabled(true) {}
+};
+
+struct FuelConfig {
+    PropulsionType propulsionType;
+    double initialFuelMass;
+    double currentFuelMass;
+    double specificFuelConsumption;
+    double fuelDensity;
+    double tankCenterOfGravity[3];
+    bool variableMassEnabled;
+    
+    constexpr FuelConfig() noexcept
+        : propulsionType(PropulsionType::ELECTRIC)
+        , initialFuelMass(0.0), currentFuelMass(0.0)
+        , specificFuelConsumption(0.0), fuelDensity(0.8)
+        , tankCenterOfGravity{0.0, 0.0, 0.0}
+        , variableMassEnabled(false) {}
+    
+    static FuelConfig combustion(double fuelMassKg) noexcept {
+        FuelConfig cfg;
+        cfg.propulsionType = PropulsionType::COMBUSTION;
+        cfg.initialFuelMass = fuelMassKg;
+        cfg.currentFuelMass = fuelMassKg;
+        cfg.specificFuelConsumption = 0.00012;
+        cfg.variableMassEnabled = true;
+        return cfg;
+    }
+};
+
 struct RotorConfig {
     double radius;
     double chord;
@@ -32,11 +98,12 @@ struct RotorConfig {
     double dragCoeff;
     double inflowRatio;
     RotorDirection direction;
+    BladeFlappingConfig flapping;
     
     constexpr RotorConfig() noexcept
         : radius(0.127), chord(0.02), pitchAngle(0.26)
         , liftSlope(5.7), dragCoeff(0.01), inflowRatio(0.05)
-        , direction(RotorDirection::CCW) {}
+        , direction(RotorDirection::CCW), flapping() {}
 };
 
 struct MotorConfig {
@@ -48,11 +115,15 @@ struct MotorConfig {
     double inertia;
     double maxCurrent;
     double efficiency;
+    double thermalMass;
+    double thermalResistance;
+    ESCConfig esc;
     
     constexpr MotorConfig() noexcept
         : kv(2300), resistance(0.1), inductance(0.00001)
         , torqueConstant(0.0043), frictionCoeff(0.00001)
-        , inertia(0.00001), maxCurrent(30), efficiency(0.85) {}
+        , inertia(0.00001), maxCurrent(30), efficiency(0.85)
+        , thermalMass(0.01), thermalResistance(5.0), esc() {}
 };
 
 struct BatteryConfig {
@@ -62,10 +133,14 @@ struct BatteryConfig {
     double capacity;
     double internalResistance;
     double dischargeCurrent;
+    double socCurveAlpha;
+    double socCurveBeta;
+    double temperatureCoeff;
     
     constexpr BatteryConfig() noexcept
         : nominalVoltage(14.8), maxVoltage(16.8), minVoltage(13.2)
-        , capacity(1500), internalResistance(0.02), dischargeCurrent(0) {}
+        , capacity(1500), internalResistance(0.02), dischargeCurrent(0)
+        , socCurveAlpha(0.8), socCurveBeta(0.15), temperatureCoeff(0.002) {}
 };
 
 struct AeroConfig {
@@ -74,11 +149,35 @@ struct AeroConfig {
     double groundEffectHeight;
     double parasiticDragArea;
     double inducedDragFactor;
+    double rotationalDragCoeff;
+    double advanceRatioDragScale;
     
     constexpr AeroConfig() noexcept
         : airDensity(1.225), groundEffectCoeff(0.5)
         , groundEffectHeight(0.5), parasiticDragArea(0.01)
-        , inducedDragFactor(1.1) {}
+        , inducedDragFactor(1.1), rotationalDragCoeff(0.001)
+        , advanceRatioDragScale(0.5) {}
+};
+
+struct DynamicMassState {
+    double currentMass;
+    double currentFuel;
+    Mat3 currentInertia;
+    Vec3 centerOfGravityOffset;
+    
+    DynamicMassState() noexcept
+        : currentMass(1.0), currentFuel(0.0)
+        , currentInertia(), centerOfGravityOffset() {}
+};
+
+struct BladeFlappingState {
+    double a1s[4];
+    double b1s[4];
+    double flapAngle[4];
+    Vec3 flappingMoment;
+    
+    constexpr BladeFlappingState() noexcept
+        : a1s{0,0,0,0}, b1s{0,0,0,0}, flapAngle{0,0,0,0}, flappingMoment() {}
 };
 
 struct RigidBodyState {
@@ -169,6 +268,19 @@ struct AdaptiveStepResult {
     bool accepted;
 };
 
+struct MotorDynamicsState {
+    double rpm[4];
+    double current[4];
+    double temperature[4];
+    double escDelay[4];
+    double rpmTarget[4];
+    double rpmFiltered[4];
+    
+    constexpr MotorDynamicsState() noexcept
+        : rpm{0,0,0,0}, current{0,0,0,0}, temperature{25,25,25,25}
+        , escDelay{0,0,0,0}, rpmTarget{0,0,0,0}, rpmFiltered{0,0,0,0} {}
+};
+
 class DrydenWindModel {
 public:
     DrydenWindModel() noexcept;
@@ -202,6 +314,61 @@ public:
     static double computeInflow(double rpm, double climbRate, double airDensity, const RotorConfig& rotor) noexcept;
 };
 
+class BladeFlappingModel {
+public:
+    static double computeAdvanceRatio(double forwardSpeed, double rpm, double rotorRadius) noexcept;
+    
+    static void computeFlappingCoeffs(
+        double advanceRatio,
+        double lockNumber,
+        double collectivePitch,
+        double& a1s,
+        double& b1s
+    ) noexcept;
+    
+    static Vec3 computeFlappingMoment(
+        const BladeFlappingState& state,
+        const Vec3& velocityBody,
+        const double* motorRPM,
+        const RotorConfig& rotor,
+        double armLength,
+        double airDensity
+    ) noexcept;
+    
+    static void updateFlappingState(
+        BladeFlappingState& state,
+        const Vec3& velocityBody,
+        const Vec3& angularVelocity,
+        const double* motorRPM,
+        const RotorConfig& rotor,
+        double dt
+    ) noexcept;
+};
+
+class VariableMassModel {
+public:
+    static double computeFuelConsumption(
+        const double* motorCurrent,
+        const double* motorRPM,
+        double dt,
+        const FuelConfig& fuel
+    ) noexcept;
+    
+    static void updateMassState(
+        DynamicMassState& state,
+        double baseMass,
+        const FuelConfig& fuel,
+        double fuelConsumed
+    ) noexcept;
+    
+    static Mat3 computeInertiaWithFuel(
+        const Mat3& baseInertia,
+        double baseMass,
+        double fuelMass,
+        const double* tankCG
+    ) noexcept;
+};
+
 class IMUSimulator {
 public:
     IMUSimulator() noexcept;
@@ -220,6 +387,33 @@ private:
     std::normal_distribution<double> dist_;
     
     Vec3 addNoise(const Vec3& v, double stddev) noexcept;
+};
+
+class NonlinearMotorModel {
+public:
+    static double computeNonlinearResponse(double input, double gamma) noexcept;
+    static double computeESCDelay(double voltage, double nominalVoltage, const ESCConfig& esc) noexcept;
+    static double computeSoftCurrentLimit(double current, double maxCurrent, double softness) noexcept;
+    static double computeThermalDerating(double temperature, double thermalCoeff) noexcept;
+    
+    static double computeMotorRPM(
+        double commandedRPM,
+        double currentRPM,
+        double voltage,
+        double temperature,
+        double dt,
+        const MotorConfig& motor,
+        const BatteryConfig& battery
+    ) noexcept;
+    
+    static void updateMotorState(
+        MotorDynamicsState& state,
+        const MotorCommand& command,
+        double voltage,
+        double dt,
+        const MotorConfig& motor,
+        const BatteryConfig& battery
+    ) noexcept;
 };
 
 class PhysicsEngine {
@@ -268,6 +462,15 @@ public:
         const AeroConfig& config
     ) noexcept;
     
+    static Vec3 computeAdvancedAeroDrag(
+        const Vec3& velocityBody,
+        const Vec3& angularVelocity,
+        const double* motorRPM,
+        const AeroConfig& aero,
+        const RotorConfig& rotor,
+        const BladeFlappingState& flapping
+    ) noexcept;
+    
     static Mat3 computeInertiaFromMass(double mass, double armLength) noexcept;
     static Quaternion integrateQuaternion(const Quaternion& q, const Vec3& omega, double dt) noexcept;
     
@@ -281,7 +484,8 @@ public:
     
     static double computeBatteryVoltage(
         const BatteryConfig& battery,
-        double totalCurrent
+        double totalCurrent,
+        double stateOfCharge = 1.0
     ) noexcept;
 
 private:

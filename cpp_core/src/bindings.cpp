@@ -8,7 +8,7 @@
 namespace py = pybind11;
 
 PYBIND11_MODULE(drone_core, m) {
-    m.doc() = "State-of-the-Art Quadrotor Physics Engine";
+    m.doc() = "State-of-the-Art Quadrotor Physics Engine with SIMD, Blade Flapping, and Variable Mass";
     
     py::class_<Vec3>(m, "Vec3")
         .def(py::init<>())
@@ -81,12 +81,12 @@ PYBIND11_MODULE(drone_core, m) {
     
     py::class_<State>(m, "State")
         .def(py::init<>())
-        .def_readwrite("position", &State::position)
-        .def_readwrite("velocity", &State::velocity)
-        .def_readwrite("orientation", &State::orientation)
-        .def_readwrite("angular_velocity", &State::angularVelocity)
-        .def_readwrite("battery_voltage", &State::batteryVoltage)
-        .def_readwrite("time", &State::time)
+        .def_readonly("position", &State::position)
+        .def_readonly("velocity", &State::velocity)
+        .def_readonly("orientation", &State::orientation)
+        .def_readonly("angular_velocity", &State::angularVelocity)
+        .def_readonly("battery_voltage", &State::batteryVoltage)
+        .def_readonly("time", &State::time)
         .def_property_readonly("motor_rpm", [](const State& s) {
             return std::vector<double>(s.motorRPM, s.motorRPM + 4);
         })
@@ -110,11 +110,11 @@ PYBIND11_MODULE(drone_core, m) {
     
     py::class_<IMUReading>(m, "IMUReading")
         .def(py::init<>())
-        .def_readwrite("accelerometer", &IMUReading::accelerometer)
-        .def_readwrite("gyroscope", &IMUReading::gyroscope)
-        .def_readwrite("magnetometer", &IMUReading::magnetometer)
-        .def_readwrite("barometer", &IMUReading::barometer)
-        .def_readwrite("timestamp", &IMUReading::timestamp);
+        .def_readonly("accelerometer", &IMUReading::accelerometer)
+        .def_readonly("gyroscope", &IMUReading::gyroscope)
+        .def_readonly("magnetometer", &IMUReading::magnetometer)
+        .def_readonly("barometer", &IMUReading::barometer)
+        .def_readonly("timestamp", &IMUReading::timestamp);
     
     py::class_<WindField>(m, "WindField")
         .def(py::init<>())
@@ -135,6 +135,41 @@ PYBIND11_MODULE(drone_core, m) {
         .value("PLUS", MotorConfiguration::PLUS)
         .value("X", MotorConfiguration::X);
     
+    py::enum_<PropulsionType>(m, "PropulsionType")
+        .value("ELECTRIC", PropulsionType::ELECTRIC)
+        .value("COMBUSTION", PropulsionType::COMBUSTION)
+        .value("HYBRID", PropulsionType::HYBRID);
+    
+    py::class_<ESCConfig>(m, "ESCConfig")
+        .def(py::init<>())
+        .def_readwrite("base_response_time", &ESCConfig::baseResponseTime)
+        .def_readwrite("min_response_time", &ESCConfig::minResponseTime)
+        .def_readwrite("max_response_time", &ESCConfig::maxResponseTime)
+        .def_readwrite("nonlinear_gamma", &ESCConfig::nonlinearGamma)
+        .def_readwrite("voltage_scale_factor", &ESCConfig::voltageScaleFactor)
+        .def_readwrite("current_limit_softness", &ESCConfig::currentLimitSoftness)
+        .def_readwrite("thermal_coeff", &ESCConfig::thermalCoeff)
+        .def_readwrite("pwm_frequency", &ESCConfig::pwmFrequency);
+    
+    py::class_<BladeFlappingConfig>(m, "BladeFlappingConfig")
+        .def(py::init<>())
+        .def_readwrite("hinge_offset", &BladeFlappingConfig::hingeOffset)
+        .def_readwrite("lock_number", &BladeFlappingConfig::lockNumber)
+        .def_readwrite("flap_frequency", &BladeFlappingConfig::flapFrequency)
+        .def_readwrite("pitch_flap_coupling", &BladeFlappingConfig::pitchFlapCoupling)
+        .def_readwrite("roll_flap_coupling", &BladeFlappingConfig::rollFlapCoupling)
+        .def_readwrite("advance_ratio_threshold", &BladeFlappingConfig::advanceRatioThreshold)
+        .def_readwrite("enabled", &BladeFlappingConfig::enabled);
+    
+    py::class_<FuelConfig>(m, "FuelConfig")
+        .def(py::init<>())
+        .def_readwrite("initial_fuel_mass", &FuelConfig::initialFuelMass)
+        .def_readwrite("current_fuel_mass", &FuelConfig::currentFuelMass)
+        .def_readwrite("specific_fuel_consumption", &FuelConfig::specificFuelConsumption)
+        .def_readwrite("fuel_density", &FuelConfig::fuelDensity)
+        .def_readwrite("variable_mass_enabled", &FuelConfig::variableMassEnabled)
+        .def_static("combustion", &FuelConfig::combustion);
+    
     py::class_<RotorConfig>(m, "RotorConfig")
         .def(py::init<>())
         .def_readwrite("radius", &RotorConfig::radius)
@@ -142,7 +177,8 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("pitch_angle", &RotorConfig::pitchAngle)
         .def_readwrite("lift_slope", &RotorConfig::liftSlope)
         .def_readwrite("drag_coeff", &RotorConfig::dragCoeff)
-        .def_readwrite("inflow_ratio", &RotorConfig::inflowRatio);
+        .def_readwrite("inflow_ratio", &RotorConfig::inflowRatio)
+        .def_readwrite("flapping", &RotorConfig::flapping);
     
     py::class_<MotorConfig>(m, "MotorConfig")
         .def(py::init<>())
@@ -152,7 +188,10 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("friction_coeff", &MotorConfig::frictionCoeff)
         .def_readwrite("inertia", &MotorConfig::inertia)
         .def_readwrite("max_current", &MotorConfig::maxCurrent)
-        .def_readwrite("efficiency", &MotorConfig::efficiency);
+        .def_readwrite("efficiency", &MotorConfig::efficiency)
+        .def_readwrite("thermal_mass", &MotorConfig::thermalMass)
+        .def_readwrite("thermal_resistance", &MotorConfig::thermalResistance)
+        .def_readwrite("esc", &MotorConfig::esc);
     
     py::class_<BatteryConfig>(m, "BatteryConfig")
         .def(py::init<>())
@@ -160,7 +199,10 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("max_voltage", &BatteryConfig::maxVoltage)
         .def_readwrite("min_voltage", &BatteryConfig::minVoltage)
         .def_readwrite("capacity", &BatteryConfig::capacity)
-        .def_readwrite("internal_resistance", &BatteryConfig::internalResistance);
+        .def_readwrite("internal_resistance", &BatteryConfig::internalResistance)
+        .def_readwrite("soc_curve_alpha", &BatteryConfig::socCurveAlpha)
+        .def_readwrite("soc_curve_beta", &BatteryConfig::socCurveBeta)
+        .def_readwrite("temperature_coeff", &BatteryConfig::temperatureCoeff);
     
     py::class_<AeroConfig>(m, "AeroConfig")
         .def(py::init<>())
@@ -168,7 +210,9 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("ground_effect_coeff", &AeroConfig::groundEffectCoeff)
         .def_readwrite("ground_effect_height", &AeroConfig::groundEffectHeight)
         .def_readwrite("parasitic_drag_area", &AeroConfig::parasiticDragArea)
-        .def_readwrite("induced_drag_factor", &AeroConfig::inducedDragFactor);
+        .def_readwrite("induced_drag_factor", &AeroConfig::inducedDragFactor)
+        .def_readwrite("rotational_drag_coeff", &AeroConfig::rotationalDragCoeff)
+        .def_readwrite("advance_ratio_drag_scale", &AeroConfig::advanceRatioDragScale);
     
     py::class_<QuadrotorConfig>(m, "QuadrotorConfig")
         .def(py::init<>())
@@ -180,11 +224,16 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("motor", &QuadrotorConfig::motor)
         .def_readwrite("battery", &QuadrotorConfig::battery)
         .def_readwrite("aero", &QuadrotorConfig::aero)
+        .def_readwrite("fuel", &QuadrotorConfig::fuel)
         .def_readwrite("enable_ground_effect", &QuadrotorConfig::enableGroundEffect)
         .def_readwrite("enable_wind_disturbance", &QuadrotorConfig::enableWindDisturbance)
         .def_readwrite("enable_motor_dynamics", &QuadrotorConfig::enableMotorDynamics)
         .def_readwrite("enable_battery_dynamics", &QuadrotorConfig::enableBatteryDynamics)
         .def_readwrite("enable_imu", &QuadrotorConfig::enableIMU)
+        .def_readwrite("enable_nonlinear_motor", &QuadrotorConfig::enableNonlinearMotor)
+        .def_readwrite("enable_blade_flapping", &QuadrotorConfig::enableBladeFlapping)
+        .def_readwrite("enable_variable_mass", &QuadrotorConfig::enableVariableMass)
+        .def_readwrite("enable_advanced_aero", &QuadrotorConfig::enableAdvancedAero)
         .def_readwrite("ground_z", &QuadrotorConfig::groundZ)
         .def_readwrite("ground_restitution", &QuadrotorConfig::groundRestitution)
         .def_readwrite("ground_friction", &QuadrotorConfig::groundFriction);
@@ -210,7 +259,10 @@ PYBIND11_MODULE(drone_core, m) {
         .def("get_config", &Quadrotor::getConfig, py::return_value_policy::reference)
         .def("get_forces", &Quadrotor::getForces)
         .def("get_torques", &Quadrotor::getTorques)
-        .def("get_simulation_time", &Quadrotor::getSimulationTime);
+        .def("get_simulation_time", &Quadrotor::getSimulationTime)
+        .def("get_current_mass", &Quadrotor::getCurrentMass)
+        .def("get_current_fuel", &Quadrotor::getCurrentFuel)
+        .def("is_integrating", &Quadrotor::isIntegrating);
     
     py::class_<PhysicsEngine>(m, "PhysicsEngine")
         .def(py::init<>())
@@ -244,4 +296,16 @@ PYBIND11_MODULE(drone_core, m) {
         .def("set_accel_bias", &IMUSimulator::setAccelBias)
         .def("set_gyro_bias", &IMUSimulator::setGyroBias)
         .def("simulate", &IMUSimulator::simulate);
+    
+    py::class_<NonlinearMotorModel>(m, "NonlinearMotorModel")
+        .def_static("compute_nonlinear_response", &NonlinearMotorModel::computeNonlinearResponse)
+        .def_static("compute_esc_delay", &NonlinearMotorModel::computeESCDelay)
+        .def_static("compute_soft_current_limit", &NonlinearMotorModel::computeSoftCurrentLimit)
+        .def_static("compute_thermal_derating", &NonlinearMotorModel::computeThermalDerating);
+    
+    py::class_<BladeFlappingModel>(m, "BladeFlappingModel")
+        .def_static("compute_advance_ratio", &BladeFlappingModel::computeAdvanceRatio);
+    
+    py::class_<VariableMassModel>(m, "VariableMassModel")
+        .def_static("compute_inertia_with_fuel", &VariableMassModel::computeInertiaWithFuel);
 }

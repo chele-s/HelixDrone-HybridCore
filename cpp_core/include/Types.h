@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include "SIMDMath.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -13,29 +14,107 @@ struct alignas(32) Vec3 {
     constexpr Vec3() noexcept : x(0), y(0), z(0) {}
     constexpr Vec3(double x_, double y_, double z_) noexcept : x(x_), y(y_), z(z_) {}
     
-    constexpr Vec3 operator+(const Vec3& v) const noexcept { return Vec3(x + v.x, y + v.y, z + v.z); }
-    constexpr Vec3 operator-(const Vec3& v) const noexcept { return Vec3(x - v.x, y - v.y, z - v.z); }
-    constexpr Vec3 operator-() const noexcept { return Vec3(-x, -y, -z); }
-    constexpr Vec3 operator*(double s) const noexcept { return Vec3(x * s, y * s, z * s); }
-    constexpr Vec3 operator*(const Vec3& v) const noexcept { return Vec3(x * v.x, y * v.y, z * v.z); }
-    constexpr Vec3 operator/(double s) const noexcept { return Vec3(x / s, y / s, z / s); }
-    constexpr Vec3& operator+=(const Vec3& v) noexcept { x += v.x; y += v.y; z += v.z; return *this; }
-    constexpr Vec3& operator-=(const Vec3& v) noexcept { x -= v.x; y -= v.y; z -= v.z; return *this; }
-    constexpr Vec3& operator*=(double s) noexcept { x *= s; y *= s; z *= s; return *this; }
-    
-    constexpr double dot(const Vec3& v) const noexcept { return x * v.x + y * v.y + z * v.z; }
-    constexpr Vec3 cross(const Vec3& v) const noexcept {
-        return Vec3(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
+    inline Vec3 operator+(const Vec3& v) const noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack b = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r = a + b;
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
     }
-    constexpr double normSquared() const noexcept { return x * x + y * y + z * z; }
-    double norm() const noexcept { return std::sqrt(normSquared()); }
-    Vec3 normalized() const noexcept { 
+    
+    inline Vec3 operator-(const Vec3& v) const noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack b = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r = a - b;
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
+    }
+    
+    constexpr Vec3 operator-() const noexcept { return Vec3(-x, -y, -z); }
+    
+    inline Vec3 operator*(double s) const noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack r = a * s;
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
+    }
+    
+    inline Vec3 operator*(const Vec3& v) const noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack b = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r = a * b;
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
+    }
+    
+    inline Vec3 operator/(double s) const noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack r = a / s;
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
+    }
+    
+    inline Vec3& operator+=(const Vec3& v) noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack b = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r = a + b;
+        r.store(x, y, z);
+        return *this;
+    }
+    
+    inline Vec3& operator-=(const Vec3& v) noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack b = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r = a - b;
+        r.store(x, y, z);
+        return *this;
+    }
+    
+    inline Vec3& operator*=(double s) noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack r = a * s;
+        r.store(x, y, z);
+        return *this;
+    }
+    
+    inline double dot(const Vec3& v) const noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack b = simd::Vec3Pack::load(v.x, v.y, v.z);
+        return a.dot(b);
+    }
+    
+    inline Vec3 cross(const Vec3& v) const noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        simd::Vec3Pack b = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r = a.cross(b);
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
+    }
+    
+    inline double normSquared() const noexcept {
+        simd::Vec3Pack a = simd::Vec3Pack::load(x, y, z);
+        return a.normSquared();
+    }
+    
+    inline double norm() const noexcept {
+        return std::sqrt(normSquared());
+    }
+    
+    inline Vec3 normalized() const noexcept { 
         double n = norm();
         return n > 1e-12 ? *this / n : Vec3();
     }
+    
     constexpr Vec3 abs() const noexcept { 
         return Vec3(x < 0 ? -x : x, y < 0 ? -y : y, z < 0 ? -z : z); 
     }
+    
     constexpr double max() const noexcept { return x > y ? (x > z ? x : z) : (y > z ? y : z); }
     constexpr double min() const noexcept { return x < y ? (x < z ? x : z) : (y < z ? y : z); }
     
@@ -45,7 +124,7 @@ struct alignas(32) Vec3 {
     static constexpr Vec3 unitZ() noexcept { return Vec3(0, 0, 1); }
 };
 
-constexpr Vec3 operator*(double s, const Vec3& v) noexcept { return v * s; }
+inline Vec3 operator*(double s, const Vec3& v) noexcept { return v * s; }
 
 struct alignas(32) Quaternion {
     double w, x, y, z;
@@ -53,50 +132,70 @@ struct alignas(32) Quaternion {
     constexpr Quaternion() noexcept : w(1), x(0), y(0), z(0) {}
     constexpr Quaternion(double w_, double x_, double y_, double z_) noexcept : w(w_), x(x_), y(y_), z(z_) {}
     
-    constexpr Quaternion operator*(const Quaternion& q) const noexcept {
-        return Quaternion(
-            w * q.w - x * q.x - y * q.y - z * q.z,
-            w * q.x + x * q.w + y * q.z - z * q.y,
-            w * q.y - x * q.z + y * q.w + z * q.x,
-            w * q.z + x * q.y - y * q.x + z * q.w
-        );
+    inline Quaternion operator*(const Quaternion& q) const noexcept {
+        simd::QuatPack a = simd::QuatPack::load(w, x, y, z);
+        simd::QuatPack b = simd::QuatPack::load(q.w, q.x, q.y, q.z);
+        simd::QuatPack r = a * b;
+        Quaternion result;
+        r.store(result.w, result.x, result.y, result.z);
+        return result;
     }
     
-    constexpr Quaternion operator+(const Quaternion& q) const noexcept {
-        return Quaternion(w + q.w, x + q.x, y + q.y, z + q.z);
+    inline Quaternion operator+(const Quaternion& q) const noexcept {
+        simd::QuatPack a = simd::QuatPack::load(w, x, y, z);
+        simd::QuatPack b = simd::QuatPack::load(q.w, q.x, q.y, q.z);
+        simd::QuatPack r = a + b;
+        Quaternion result;
+        r.store(result.w, result.x, result.y, result.z);
+        return result;
     }
     
-    constexpr Quaternion operator*(double s) const noexcept {
-        return Quaternion(w * s, x * s, y * s, z * s);
+    inline Quaternion operator*(double s) const noexcept {
+        simd::QuatPack a = simd::QuatPack::load(w, x, y, z);
+        simd::QuatPack r = a * s;
+        Quaternion result;
+        r.store(result.w, result.x, result.y, result.z);
+        return result;
     }
     
-    constexpr double normSquared() const noexcept { return w * w + x * x + y * y + z * z; }
-    double norm() const noexcept { return std::sqrt(normSquared()); }
-    
-    Quaternion normalized() const noexcept {
-        double n = norm();
-        return n > 1e-12 ? Quaternion(w / n, x / n, y / n, z / n) : Quaternion();
+    inline double normSquared() const noexcept {
+        simd::QuatPack a = simd::QuatPack::load(w, x, y, z);
+        return a.normSquared();
     }
     
-    constexpr Quaternion conjugate() const noexcept { return Quaternion(w, -x, -y, -z); }
+    inline double norm() const noexcept { return std::sqrt(normSquared()); }
     
-    Quaternion inverse() const noexcept {
+    inline Quaternion normalized() const noexcept {
+        simd::QuatPack a = simd::QuatPack::load(w, x, y, z);
+        simd::QuatPack r = a.normalized();
+        Quaternion result;
+        r.store(result.w, result.x, result.y, result.z);
+        return result;
+    }
+    
+    inline Quaternion conjugate() const noexcept { return Quaternion(w, -x, -y, -z); }
+    
+    inline Quaternion inverse() const noexcept {
         double n2 = normSquared();
         return n2 > 1e-12 ? Quaternion(w / n2, -x / n2, -y / n2, -z / n2) : Quaternion();
     }
     
-    Vec3 rotate(const Vec3& v) const noexcept {
-        Vec3 qv(x, y, z);
-        Vec3 uv = qv.cross(v);
-        Vec3 uuv = qv.cross(uv);
-        return v + ((uv * w) + uuv) * 2.0;
+    inline Vec3 rotate(const Vec3& v) const noexcept {
+        simd::QuatPack q = simd::QuatPack::load(w, x, y, z);
+        simd::Vec3Pack vp = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r = q.rotate(vp);
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
     }
     
-    Vec3 inverseRotate(const Vec3& v) const noexcept {
-        Vec3 qv(-x, -y, -z);
-        Vec3 uv = qv.cross(v);
-        Vec3 uuv = qv.cross(uv);
-        return v + ((uv * w) + uuv) * 2.0;
+    inline Vec3 inverseRotate(const Vec3& v) const noexcept {
+        simd::QuatPack q = simd::QuatPack::load(w, -x, -y, -z);
+        simd::Vec3Pack vp = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r = q.rotate(vp);
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
     }
     
     static Quaternion fromAxisAngle(const Vec3& axis, double angle) noexcept {
@@ -187,12 +286,13 @@ struct alignas(64) Mat3 {
         return Mat3(0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
     
-    constexpr Vec3 operator*(const Vec3& v) const noexcept {
-        return Vec3(
-            data[0][0] * v.x + data[0][1] * v.y + data[0][2] * v.z,
-            data[1][0] * v.x + data[1][1] * v.y + data[1][2] * v.z,
-            data[2][0] * v.x + data[2][1] * v.y + data[2][2] * v.z
-        );
+    inline Vec3 operator*(const Vec3& v) const noexcept {
+        simd::Vec3Pack vp = simd::Vec3Pack::load(v.x, v.y, v.z);
+        simd::Vec3Pack r;
+        simd::mat3_mul_vec3(data, vp, r);
+        Vec3 result;
+        r.store(result.x, result.y, result.z);
+        return result;
     }
     
     constexpr Mat3 operator*(const Mat3& m) const noexcept {

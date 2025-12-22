@@ -4,21 +4,26 @@
 #include <cstring>
 
 Quadrotor::Quadrotor() noexcept
-    : config_(), motorState_(), imuReading_()
+    : config_(), motorState_(), motorDynamics_(), flappingState_(), massState_(), imuReading_()
     , physics_(IntegrationMethod::RK4), windModel_(), imuSim_()
-    , simulationTime_(0), lastForce_(), lastTorque_(), windVelocity_() {
+    , simulationTime_(0), totalFuelConsumed_(0), lastForce_(), lastTorque_(), windVelocity_()
+    , integrating_(false) {
     initialize();
 }
 
 Quadrotor::Quadrotor(const QuadrotorConfig& config) noexcept
-    : config_(config), motorState_(), imuReading_()
+    : config_(config), motorState_(), motorDynamics_(), flappingState_(), massState_(), imuReading_()
     , physics_(config.integrationMethod), windModel_(), imuSim_()
-    , simulationTime_(0), lastForce_(), lastTorque_(), windVelocity_() {
+    , simulationTime_(0), totalFuelConsumed_(0), lastForce_(), lastTorque_(), windVelocity_()
+    , integrating_(false) {
     initialize();
 }
 
 void Quadrotor::initialize() noexcept {
-    cachedInertiaInverse_ = config_.inertiaMatrix.inverse();
+    currentInertia_ = config_.inertiaMatrix;
+    cachedInertiaInverse_ = currentInertia_.inverse();
+    massState_.currentMass = config_.mass + config_.fuel.currentFuelMass;
+    massState_.currentFuel = config_.fuel.currentFuelMass;
     reset();
 }
 
@@ -33,10 +38,17 @@ void Quadrotor::reset() noexcept {
     std::memset(state_.motorRPM, 0, sizeof(state_.motorRPM));
     
     motorState_ = MotorState();
+    motorDynamics_ = MotorDynamicsState();
+    flappingState_ = BladeFlappingState();
+    massState_.currentMass = config_.mass + config_.fuel.currentFuelMass;
+    massState_.currentFuel = config_.fuel.currentFuelMass;
+    totalFuelConsumed_ = 0;
     simulationTime_ = 0;
     lastForce_ = Vec3();
     lastTorque_ = Vec3();
     windVelocity_ = Vec3();
+    
+    updateInertia();
 }
 
 State Quadrotor::getState() const noexcept {
@@ -67,26 +79,61 @@ double Quadrotor::getSimulationTime() const noexcept {
     return simulationTime_;
 }
 
-void Quadrotor::setState(const State& state) noexcept {
-    state_ = state;
-    for (int i = 0; i < 4; ++i) {
-        motorState_.rpm[i] = state.motorRPM[i];
+double Quadrotor::getCurrentMass() const noexcept {
+    return massState_.currentMass;
+}
+
+double Quadrotor::getCurrentFuel() const noexcept {
+    return massState_.currentFuel;
+}
+
+bool Quadrotor::isIntegrating() const noexcept {
+    return integrating_.load(std::memory_order_acquire);
+}
+
+void Quadrotor::checkNotIntegrating() const {
+    if (integrating_.load(std::memory_order_acquire)) {
+        throw std::runtime_error("Cannot modify state during physics integration");
     }
 }
 
-void Quadrotor::setPosition(const Vec3& pos) noexcept {
+void Quadrotor::updateInertia() noexcept {
+    if (config_.enableVariableMass && config_.fuel.variableMassEnabled) {
+        currentInertia_ = VariableMassModel::computeInertiaWithFuel(
+            config_.inertiaMatrix, config_.mass, massState_.currentFuel, config_.fuel.tankCenterOfGravity
+        );
+    } else {
+        currentInertia_ = config_.inertiaMatrix;
+    }
+    cachedInertiaInverse_ = currentInertia_.inverse();
+}
+
+void Quadrotor::setState(const State& state) {
+    checkNotIntegrating();
+    state_ = state;
+    for (int i = 0; i < 4; ++i) {
+        motorState_.rpm[i] = state.motorRPM[i];
+        motorDynamics_.rpm[i] = state.motorRPM[i];
+    }
+}
+
+void Quadrotor::setPosition(const Vec3& pos) {
+    checkNotIntegrating();
     state_.position = pos;
 }
 
-void Quadrotor::setVelocity(const Vec3& vel) noexcept {
+void Quadrotor::setVelocity(const Vec3& vel) {
+    checkNotIntegrating();
     state_.velocity = vel;
 }
 
-void Quadrotor::setOrientation(const Quaternion& q) noexcept {
+void Quadrotor::setOrientation(const Quaternion& q) {
+    checkNotIntegrating();
     state_.orientation = q.normalized();
 }
 
-void Quadrotor::setAngularVelocity(const Vec3& omega) noexcept {
+void Quadrotor::setAngularVelocity(const Vec3& omega) {
+    checkNotIntegrating();
     state_.angularVelocity = omega;
 }
 
@@ -109,29 +156,69 @@ void Quadrotor::enableFeature(const char* feature, bool enable) noexcept {
     else if (std::strcmp(feature, "motor_dynamics") == 0) config_.enableMotorDynamics = enable;
     else if (std::strcmp(feature, "battery") == 0) config_.enableBatteryDynamics = enable;
     else if (std::strcmp(feature, "imu") == 0) config_.enableIMU = enable;
+    else if (std::strcmp(feature, "nonlinear_motor") == 0) config_.enableNonlinearMotor = enable;
+    else if (std::strcmp(feature, "blade_flapping") == 0) config_.enableBladeFlapping = enable;
+    else if (std::strcmp(feature, "variable_mass") == 0) config_.enableVariableMass = enable;
+    else if (std::strcmp(feature, "advanced_aero") == 0) config_.enableAdvancedAero = enable;
 }
 
 void Quadrotor::updateMotorDynamics(const MotorCommand& command, double dt) noexcept {
     double voltage = state_.batteryVoltage;
     
-    for (int i = 0; i < 4; ++i) {
-        double targetRPM = std::clamp(command.rpm[i], 0.0, 20000.0);
-        
-        if (config_.enableMotorDynamics) {
+    if (config_.enableNonlinearMotor && config_.enableMotorDynamics) {
+        NonlinearMotorModel::updateMotorState(
+            motorDynamics_, command, voltage, dt, config_.motor, config_.battery
+        );
+        for (int i = 0; i < 4; ++i) {
+            motorState_.rpm[i] = motorDynamics_.rpm[i];
+            motorState_.current[i] = motorDynamics_.current[i];
+            motorState_.temperature[i] = motorDynamics_.temperature[i];
+            state_.motorRPM[i] = motorDynamics_.rpm[i];
+        }
+    } else if (config_.enableMotorDynamics) {
+        for (int i = 0; i < 4; ++i) {
+            double targetRPM = std::clamp(command.rpm[i], 0.0, 20000.0);
+            
             motorState_.rpm[i] = PhysicsEngine::computeMotorRPM(
                 targetRPM, motorState_.rpm[i], voltage, dt, config_.motor
             );
             
             double backEmf = motorState_.rpm[i] / config_.motor.kv;
             motorState_.current[i] = std::max(0.0, (voltage - backEmf) / config_.motor.resistance);
-        } else {
+            state_.motorRPM[i] = motorState_.rpm[i];
+        }
+    } else {
+        for (int i = 0; i < 4; ++i) {
+            double targetRPM = std::clamp(command.rpm[i], 0.0, 20000.0);
             double alpha = dt / (0.02 + dt);
             motorState_.rpm[i] += alpha * (targetRPM - motorState_.rpm[i]);
             motorState_.current[i] = 0;
+            state_.motorRPM[i] = motorState_.rpm[i];
         }
-        
-        state_.motorRPM[i] = motorState_.rpm[i];
     }
+}
+
+void Quadrotor::updateBladeFlapping(double dt) noexcept {
+    if (!config_.enableBladeFlapping) return;
+    
+    Vec3 velocityBody = state_.orientation.inverseRotate(state_.velocity);
+    BladeFlappingModel::updateFlappingState(
+        flappingState_, velocityBody, state_.angularVelocity, motorState_.rpm, config_.rotor, dt
+    );
+}
+
+void Quadrotor::updateMassDynamics(double dt) noexcept {
+    if (!config_.enableVariableMass || !config_.fuel.variableMassEnabled) return;
+    
+    double fuelConsumed = VariableMassModel::computeFuelConsumption(
+        motorState_.current, motorState_.rpm, dt, config_.fuel
+    );
+    
+    totalFuelConsumed_ += fuelConsumed;
+    config_.fuel.currentFuelMass = std::max(0.0, config_.fuel.initialFuelMass - totalFuelConsumed_);
+    
+    VariableMassModel::updateMassState(massState_, config_.mass, config_.fuel, totalFuelConsumed_);
+    updateInertia();
 }
 
 void Quadrotor::updateBattery() noexcept {
@@ -142,7 +229,7 @@ void Quadrotor::updateBattery() noexcept {
         totalCurrent += motorState_.current[i];
     }
     
-    state_.batteryVoltage = PhysicsEngine::computeBatteryVoltage(config_.battery, totalCurrent);
+    state_.batteryVoltage = PhysicsEngine::computeBatteryVoltage(config_.battery, totalCurrent, 1.0);
 }
 
 void Quadrotor::updateWind(double dt) noexcept {
@@ -158,7 +245,7 @@ void Quadrotor::updateWind(double dt) noexcept {
 void Quadrotor::updateIMU() noexcept {
     if (!config_.enableIMU) return;
     
-    Vec3 acceleration = lastForce_ / config_.mass;
+    Vec3 acceleration = lastForce_ / massState_.currentMass;
     imuReading_ = imuSim_.simulate(state_, acceleration, simulationTime_);
 }
 
@@ -180,14 +267,28 @@ Vec3 Quadrotor::computeTotalThrust() const noexcept {
 }
 
 Vec3 Quadrotor::computeTotalTorque() const noexcept {
-    return PhysicsEngine::computeTorques(
+    Vec3 baseTorque = PhysicsEngine::computeTorques(
         motorState_.rpm, config_.rotor, config_.armLength,
         config_.rotor.dragCoeff, config_.motorConfig
     );
+    
+    if (config_.enableBladeFlapping) {
+        baseTorque = baseTorque + flappingState_.flappingMoment;
+    }
+    
+    return baseTorque;
 }
 
 Vec3 Quadrotor::computeAerodynamicForces(const Vec3& velocityBody) const noexcept {
     Vec3 relativeVelocity = velocityBody - state_.orientation.inverseRotate(windVelocity_);
+    
+    if (config_.enableAdvancedAero) {
+        return PhysicsEngine::computeAdvancedAeroDrag(
+            relativeVelocity, state_.angularVelocity, motorState_.rpm,
+            config_.aero, config_.rotor, flappingState_
+        );
+    }
+    
     return PhysicsEngine::computeAerodynamicDrag(
         relativeVelocity, state_.angularVelocity, config_.aero
     );
@@ -195,7 +296,7 @@ Vec3 Quadrotor::computeAerodynamicForces(const Vec3& velocityBody) const noexcep
 
 Vec3 Quadrotor::computeGyroscopicTorque() const noexcept {
     Vec3 omega = state_.angularVelocity;
-    Vec3 Iomega = config_.inertiaMatrix * omega;
+    Vec3 Iomega = currentInertia_ * omega;
     return omega.cross(Iomega);
 }
 
@@ -205,7 +306,7 @@ RigidBodyDerivative Quadrotor::computeDerivative(const RigidBodyState& rbState, 
     Vec3 thrustBody = computeTotalThrust();
     Vec3 thrustWorld = rbState.orientation.rotate(thrustBody);
     
-    Vec3 gravity(0, 0, -GRAVITY * config_.mass);
+    Vec3 gravity(0, 0, -GRAVITY * massState_.currentMass);
     
     Vec3 velocityBody = rbState.orientation.inverseRotate(rbState.velocity);
     Vec3 dragBody = computeAerodynamicForces(velocityBody);
@@ -216,11 +317,11 @@ RigidBodyDerivative Quadrotor::computeDerivative(const RigidBodyState& rbState, 
     Vec3 totalForce = thrustWorld + gravity + dragWorld + windForce;
     
     d.velocity = rbState.velocity;
-    d.acceleration = totalForce / config_.mass;
+    d.acceleration = totalForce / massState_.currentMass;
     
     Vec3 torques = computeTotalTorque();
     Vec3 omega = rbState.angularVelocity;
-    Vec3 Iomega = config_.inertiaMatrix * omega;
+    Vec3 Iomega = currentInertia_ * omega;
     Vec3 gyroscopic = omega.cross(Iomega);
     
     d.angularAcceleration = cachedInertiaInverse_ * (torques - gyroscopic);
@@ -231,9 +332,13 @@ RigidBodyDerivative Quadrotor::computeDerivative(const RigidBodyState& rbState, 
 }
 
 void Quadrotor::step(const MotorCommand& command, double dt) {
+    IntegrationGuard guard(integrating_);
+    
     updateMotorDynamics(command, dt);
     updateBattery();
     updateWind(dt);
+    updateBladeFlapping(dt);
+    updateMassDynamics(dt);
     
     RigidBodyState rbState;
     rbState.position = state_.position;
@@ -252,7 +357,7 @@ void Quadrotor::step(const MotorCommand& command, double dt) {
     state_.orientation = nextState.orientation;
     state_.angularVelocity = nextState.angularVelocity;
     
-    lastForce_ = state_.orientation.rotate(computeTotalThrust()) + Vec3(0, 0, -GRAVITY * config_.mass);
+    lastForce_ = state_.orientation.rotate(computeTotalThrust()) + Vec3(0, 0, -GRAVITY * massState_.currentMass);
     lastTorque_ = computeTotalTorque();
     
     simulationTime_ += dt;
@@ -263,9 +368,13 @@ void Quadrotor::step(const MotorCommand& command, double dt) {
 }
 
 void Quadrotor::stepAdaptive(const MotorCommand& command, double& dt) {
+    IntegrationGuard guard(integrating_);
+    
     updateMotorDynamics(command, dt);
     updateBattery();
     updateWind(dt);
+    updateBladeFlapping(dt);
+    updateMassDynamics(dt);
     
     RigidBodyState rbState;
     rbState.position = state_.position;
@@ -289,7 +398,7 @@ void Quadrotor::stepAdaptive(const MotorCommand& command, double& dt) {
     
     dt = result.actualDt;
     
-    lastForce_ = state_.orientation.rotate(computeTotalThrust()) + Vec3(0, 0, -GRAVITY * config_.mass);
+    lastForce_ = state_.orientation.rotate(computeTotalThrust()) + Vec3(0, 0, -GRAVITY * massState_.currentMass);
     lastTorque_ = computeTotalTorque();
     state_.time = simulationTime_;
     

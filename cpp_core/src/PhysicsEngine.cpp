@@ -151,6 +151,129 @@ IMUReading IMUSimulator::simulate(const State& state, const Vec3& acceleration, 
     return reading;
 }
 
+double NonlinearMotorModel::computeNonlinearResponse(double input, double gamma) noexcept {
+    if (input <= 0) return 0;
+    if (input >= 1) return 1;
+    
+    double x = input;
+    double sign = 1.0;
+    if (gamma < 1.0) {
+        x = 1.0 - input;
+        sign = -1.0;
+    }
+    
+    double base = std::pow(std::abs(x), gamma);
+    
+    if (gamma < 1.0) {
+        return 1.0 - base;
+    }
+    
+    double blend = 0.5 + 0.5 * std::tanh(4.0 * (x - 0.5));
+    double linearPart = x;
+    double curvePart = base;
+    
+    return blend * curvePart + (1.0 - blend) * linearPart;
+}
+
+double NonlinearMotorModel::computeESCDelay(double voltage, double nominalVoltage, const ESCConfig& esc) noexcept {
+    double voltageRatio = nominalVoltage / std::max(voltage, 0.1);
+    double scaledDelay = esc.baseResponseTime * voltageRatio * esc.voltageScaleFactor;
+    return std::clamp(scaledDelay, esc.minResponseTime, esc.maxResponseTime);
+}
+
+double NonlinearMotorModel::computeSoftCurrentLimit(double current, double maxCurrent, double softness) noexcept {
+    if (current <= maxCurrent) return current;
+    
+    double excess = current - maxCurrent;
+    double softExcess = maxCurrent * softness * std::tanh(excess / (maxCurrent * softness));
+    
+    return maxCurrent + softExcess;
+}
+
+double NonlinearMotorModel::computeThermalDerating(double temperature, double thermalCoeff) noexcept {
+    constexpr double AMBIENT = 25.0;
+    constexpr double MAX_TEMP = 120.0;
+    
+    if (temperature <= AMBIENT) return 1.0;
+    if (temperature >= MAX_TEMP) return 0.5;
+    
+    double ratio = (temperature - AMBIENT) / (MAX_TEMP - AMBIENT);
+    return 1.0 - thermalCoeff * ratio * ratio;
+}
+
+double NonlinearMotorModel::computeMotorRPM(
+    double commandedRPM,
+    double currentRPM,
+    double voltage,
+    double temperature,
+    double dt,
+    const MotorConfig& motor,
+    const BatteryConfig& battery
+) noexcept {
+    double normalizedCommand = std::clamp(commandedRPM / 20000.0, 0.0, 1.0);
+    double nonlinearCommand = computeNonlinearResponse(normalizedCommand, motor.esc.nonlinearGamma);
+    double targetRPM = nonlinearCommand * 20000.0;
+    
+    double escDelay = computeESCDelay(voltage, battery.nominalVoltage, motor.esc);
+    double thermalFactor = computeThermalDerating(temperature, motor.esc.thermalCoeff);
+    
+    double effectiveMaxCurrent = motor.maxCurrent * thermalFactor;
+    
+    double backEmf = currentRPM / motor.kv;
+    double rawCurrent = (voltage - backEmf) / motor.resistance;
+    double current = computeSoftCurrentLimit(rawCurrent, effectiveMaxCurrent, motor.esc.currentLimitSoftness);
+    current = std::max(current, 0.0);
+    
+    double efficiency = motor.efficiency * (0.9 + 0.1 * (1.0 - std::abs(current) / effectiveMaxCurrent));
+    double torque = motor.torqueConstant * current * efficiency;
+    
+    double friction = motor.frictionCoeff * currentRPM;
+    double loadTorque = motor.frictionCoeff * 0.1 * (currentRPM / 1000.0) * (currentRPM / 1000.0);
+    double netTorque = torque - friction - loadTorque;
+    
+    double angularAccel = netTorque / motor.inertia;
+    double newRPM = currentRPM + angularAccel * dt * 30.0 / M_PI;
+    
+    double alpha = dt / (escDelay + dt);
+    double filteredTarget = currentRPM + alpha * (targetRPM - currentRPM);
+    
+    double rpmError = filteredTarget - currentRPM;
+    double maxRPMChange = 20000.0 * dt / escDelay;
+    double clampedError = std::clamp(rpmError, -maxRPMChange, maxRPMChange);
+    
+    return std::clamp(currentRPM + clampedError, 0.0, 20000.0);
+}
+
+void NonlinearMotorModel::updateMotorState(
+    MotorDynamicsState& state,
+    const MotorCommand& command,
+    double voltage,
+    double dt,
+    const MotorConfig& motor,
+    const BatteryConfig& battery
+) noexcept {
+    for (int i = 0; i < 4; ++i) {
+        double targetRPM = std::clamp(command.rpm[i], 0.0, 20000.0);
+        
+        state.rpm[i] = computeMotorRPM(
+            targetRPM, state.rpm[i], voltage, state.temperature[i],
+            dt, motor, battery
+        );
+        
+        double backEmf = state.rpm[i] / motor.kv;
+        double current = (voltage - backEmf) / motor.resistance;
+        state.current[i] = std::max(0.0, current);
+        
+        double powerDissipated = state.current[i] * state.current[i] * motor.resistance;
+        double heatGenerated = powerDissipated * dt / motor.thermalMass;
+        double heatLost = (state.temperature[i] - 25.0) / motor.thermalResistance * dt / motor.thermalMass;
+        state.temperature[i] += heatGenerated - heatLost;
+        state.temperature[i] = std::clamp(state.temperature[i], 25.0, 150.0);
+        
+        state.escDelay[i] = computeESCDelay(voltage, battery.nominalVoltage, motor.esc);
+    }
+}
+
 PhysicsEngine::PhysicsEngine(IntegrationMethod method) noexcept
     : method_(method), absTol_(1e-6), relTol_(1e-6), minDt_(1e-6), maxDt_(0.1) {}
 
@@ -374,9 +497,7 @@ std::array<double, RigidBodyState::DIMENSION> PhysicsEngine::arrayScale(
     double scale
 ) noexcept {
     std::array<double, RigidBodyState::DIMENSION> result;
-    for (size_t i = 0; i < RigidBodyState::DIMENSION; ++i) {
-        result[i] = arr[i] * scale;
-    }
+    simd::array_scale_simd(arr.data(), scale, result.data(), RigidBodyState::DIMENSION);
     return result;
 }
 
@@ -385,9 +506,7 @@ std::array<double, RigidBodyState::DIMENSION> PhysicsEngine::arrayAdd(
     const std::array<double, RigidBodyState::DIMENSION>& b
 ) noexcept {
     std::array<double, RigidBodyState::DIMENSION> result;
-    for (size_t i = 0; i < RigidBodyState::DIMENSION; ++i) {
-        result[i] = a[i] + b[i];
-    }
+    simd::array_add_simd(a.data(), b.data(), result.data(), RigidBodyState::DIMENSION);
     return result;
 }
 
@@ -395,12 +514,7 @@ double PhysicsEngine::computeError(
     const std::array<double, RigidBodyState::DIMENSION>& y,
     const std::array<double, RigidBodyState::DIMENSION>& yErr
 ) noexcept {
-    double maxErr = 0;
-    for (size_t i = 0; i < RigidBodyState::DIMENSION; ++i) {
-        double scale = std::max(std::abs(y[i]), 1.0);
-        maxErr = std::max(maxErr, std::abs(yErr[i]) / scale);
-    }
-    return maxErr;
+    return simd::array_max_error_simd(y.data(), yErr.data(), RigidBodyState::DIMENSION);
 }
 
 double PhysicsEngine::computeThrust(
@@ -488,25 +602,234 @@ double PhysicsEngine::computeMotorRPM(
     double dt,
     const MotorConfig& motor
 ) noexcept {
-    double backEmf = currentRPM / motor.kv;
-    double current = (voltage - backEmf) / motor.resistance;
-    current = std::clamp(current, -motor.maxCurrent, motor.maxCurrent);
-    
-    double torque = motor.torqueConstant * current * motor.efficiency;
-    double friction = motor.frictionCoeff * currentRPM;
-    double netTorque = torque - friction;
-    
-    double angularAccel = netTorque / motor.inertia;
-    double newRPM = currentRPM + angularAccel * dt * 30.0 / M_PI;
-    
-    double alpha = dt / (0.02 + dt);
-    return currentRPM + alpha * (std::clamp(newRPM, 0.0, commandedRPM) - currentRPM);
+    BatteryConfig battery;
+    return NonlinearMotorModel::computeMotorRPM(
+        commandedRPM, currentRPM, voltage, 25.0, dt, motor, battery
+    );
 }
 
 double PhysicsEngine::computeBatteryVoltage(
     const BatteryConfig& battery,
-    double totalCurrent
+    double totalCurrent,
+    double stateOfCharge
 ) noexcept {
+    double socFactor = battery.socCurveAlpha + battery.socCurveBeta * stateOfCharge;
+    double baseVoltage = battery.minVoltage + (battery.maxVoltage - battery.minVoltage) * socFactor * stateOfCharge;
+    
     double voltageDrop = totalCurrent * battery.internalResistance;
-    return std::max(battery.minVoltage, battery.nominalVoltage - voltageDrop);
+    
+    double dynamicResistance = battery.internalResistance * (1.0 + 0.5 * (1.0 - stateOfCharge));
+    double dynamicDrop = totalCurrent * dynamicResistance;
+    
+    return std::max(battery.minVoltage, baseVoltage - dynamicDrop);
 }
+
+double BladeFlappingModel::computeAdvanceRatio(double forwardSpeed, double rpm, double rotorRadius) noexcept {
+    if (rpm <= 0 || rotorRadius <= 0) return 0;
+    double omega = rpm * M_PI / 30.0;
+    double tipSpeed = omega * rotorRadius;
+    return tipSpeed > 1e-6 ? forwardSpeed / tipSpeed : 0;
+}
+
+void BladeFlappingModel::computeFlappingCoeffs(
+    double advanceRatio,
+    double lockNumber,
+    double collectivePitch,
+    double& a1s,
+    double& b1s
+) noexcept {
+    double mu = advanceRatio;
+    double mu2 = mu * mu;
+    double gamma = lockNumber;
+    
+    double theta0 = collectivePitch;
+    double lambda = 0.05;
+    
+    double denom = 1.0 + 0.5 * mu2;
+    double invDenom = 1.0 / denom;
+    
+    a1s = (2.0 * mu * (theta0 * (4.0/3.0) - lambda)) * invDenom / gamma;
+    
+    b1s = (4.0 * mu * theta0 / 3.0) * invDenom / (gamma * (1.0 + mu2));
+    
+    double satLimit = 0.15;
+    a1s = std::clamp(a1s, -satLimit, satLimit);
+    b1s = std::clamp(b1s, -satLimit, satLimit);
+}
+
+Vec3 BladeFlappingModel::computeFlappingMoment(
+    const BladeFlappingState& state,
+    const Vec3& velocityBody,
+    const double* motorRPM,
+    const RotorConfig& rotor,
+    double armLength,
+    double airDensity
+) noexcept {
+    double rollMoment = 0;
+    double pitchMoment = 0;
+    
+    for (int i = 0; i < 4; ++i) {
+        if (motorRPM[i] <= 0) continue;
+        
+        double thrust = BladeElementTheory::computeThrust(motorRPM[i], airDensity, rotor);
+        double hubMomentCoeff = rotor.flapping.hingeOffset * rotor.radius;
+        
+        double Mx = thrust * hubMomentCoeff * state.b1s[i] * rotor.flapping.rollFlapCoupling;
+        double My = thrust * hubMomentCoeff * state.a1s[i] * rotor.flapping.pitchFlapCoupling;
+        
+        rollMoment += Mx;
+        pitchMoment += My;
+    }
+    
+    return Vec3(rollMoment, pitchMoment, 0);
+}
+
+void BladeFlappingModel::updateFlappingState(
+    BladeFlappingState& state,
+    const Vec3& velocityBody,
+    const Vec3& angularVelocity,
+    const double* motorRPM,
+    const RotorConfig& rotor,
+    double dt
+) noexcept {
+    if (!rotor.flapping.enabled) return;
+    
+    double forwardSpeed = std::sqrt(velocityBody.x * velocityBody.x + velocityBody.y * velocityBody.y);
+    
+    for (int i = 0; i < 4; ++i) {
+        if (motorRPM[i] <= 0) {
+            state.a1s[i] = 0;
+            state.b1s[i] = 0;
+            continue;
+        }
+        
+        double mu = computeAdvanceRatio(forwardSpeed, motorRPM[i], rotor.radius);
+        
+        if (mu < rotor.flapping.advanceRatioThreshold) {
+            double decay = std::exp(-dt * rotor.flapping.flapFrequency);
+            state.a1s[i] *= decay;
+            state.b1s[i] *= decay;
+            continue;
+        }
+        
+        double a1s_new, b1s_new;
+        computeFlappingCoeffs(mu, rotor.flapping.lockNumber, rotor.pitchAngle, a1s_new, b1s_new);
+        
+        double tau = 1.0 / rotor.flapping.flapFrequency;
+        double alpha = dt / (tau + dt);
+        state.a1s[i] += alpha * (a1s_new - state.a1s[i]);
+        state.b1s[i] += alpha * (b1s_new - state.b1s[i]);
+        
+        state.flapAngle[i] = std::sqrt(state.a1s[i]*state.a1s[i] + state.b1s[i]*state.b1s[i]);
+    }
+    
+    state.flappingMoment = computeFlappingMoment(
+        state, velocityBody, motorRPM, rotor, 0.25, 1.225
+    );
+}
+
+double VariableMassModel::computeFuelConsumption(
+    const double* motorCurrent,
+    const double* motorRPM,
+    double dt,
+    const FuelConfig& fuel
+) noexcept {
+    if (fuel.propulsionType == PropulsionType::ELECTRIC || !fuel.variableMassEnabled) {
+        return 0;
+    }
+    
+    double totalPower = 0;
+    for (int i = 0; i < 4; ++i) {
+        double powerW = motorCurrent[i] * 15.0;
+        totalPower += powerW;
+    }
+    
+    double fuelRate = fuel.specificFuelConsumption * totalPower;
+    return fuelRate * dt;
+}
+
+void VariableMassModel::updateMassState(
+    DynamicMassState& state,
+    double baseMass,
+    const FuelConfig& fuel,
+    double fuelConsumed
+) noexcept {
+    state.currentFuel = std::max(0.0, fuel.currentFuelMass - fuelConsumed);
+    state.currentMass = baseMass + state.currentFuel;
+    
+    double fuelRatio = fuel.initialFuelMass > 0 ? state.currentFuel / fuel.initialFuelMass : 0;
+    state.centerOfGravityOffset = Vec3(
+        fuel.tankCenterOfGravity[0] * (1.0 - fuelRatio),
+        fuel.tankCenterOfGravity[1] * (1.0 - fuelRatio),
+        fuel.tankCenterOfGravity[2] * (1.0 - fuelRatio)
+    );
+}
+
+Mat3 VariableMassModel::computeInertiaWithFuel(
+    const Mat3& baseInertia,
+    double baseMass,
+    double fuelMass,
+    const double* tankCG
+) noexcept {
+    if (fuelMass <= 0) return baseInertia;
+    
+    double dx = tankCG[0];
+    double dy = tankCG[1];
+    double dz = tankCG[2];
+    
+    double Ixx_fuel = fuelMass * (dy*dy + dz*dz);
+    double Iyy_fuel = fuelMass * (dx*dx + dz*dz);
+    double Izz_fuel = fuelMass * (dx*dx + dy*dy);
+    double Ixy_fuel = -fuelMass * dx * dy;
+    double Ixz_fuel = -fuelMass * dx * dz;
+    double Iyz_fuel = -fuelMass * dy * dz;
+    
+    return Mat3(
+        baseInertia.data[0][0] + Ixx_fuel, baseInertia.data[0][1] + Ixy_fuel, baseInertia.data[0][2] + Ixz_fuel,
+        baseInertia.data[1][0] + Ixy_fuel, baseInertia.data[1][1] + Iyy_fuel, baseInertia.data[1][2] + Iyz_fuel,
+        baseInertia.data[2][0] + Ixz_fuel, baseInertia.data[2][1] + Iyz_fuel, baseInertia.data[2][2] + Izz_fuel
+    );
+}
+
+Vec3 PhysicsEngine::computeAdvancedAeroDrag(
+    const Vec3& velocityBody,
+    const Vec3& angularVelocity,
+    const double* motorRPM,
+    const AeroConfig& aero,
+    const RotorConfig& rotor,
+    const BladeFlappingState& flapping
+) noexcept {
+    double speed = velocityBody.norm();
+    if (speed < 1e-9) return Vec3();
+    
+    double q = 0.5 * aero.airDensity * speed * speed;
+    double parasiticDrag = q * aero.parasiticDragArea;
+    Vec3 dragDir = velocityBody.normalized() * (-1.0);
+    Vec3 linearDrag = dragDir * parasiticDrag;
+    
+    double avgRPM = 0;
+    for (int i = 0; i < 4; ++i) avgRPM += motorRPM[i];
+    avgRPM *= 0.25;
+    
+    double mu = BladeFlappingModel::computeAdvanceRatio(speed, avgRPM, rotor.radius);
+    double inducedDragFactor = 1.0 + aero.advanceRatioDragScale * mu * mu;
+    
+    double omega = avgRPM * M_PI / 30.0;
+    double tipSpeed = omega * rotor.radius;
+    double diskArea = M_PI * rotor.radius * rotor.radius * 4.0;
+    double hForce = 0;
+    if (tipSpeed > 1e-6) {
+        double thrustCoeff = 0.01;
+        hForce = aero.airDensity * diskArea * tipSpeed * tipSpeed * thrustCoeff * mu * inducedDragFactor;
+    }
+    Vec3 hubDrag = Vec3(-hForce * (velocityBody.x > 0 ? 1 : -1), 
+                        -hForce * (velocityBody.y > 0 ? 1 : -1) * 0.5, 0);
+    
+    double omegaNorm = angularVelocity.norm();
+    Vec3 rotationalDrag = angularVelocity * (-aero.rotationalDragCoeff * omegaNorm);
+    
+    Vec3 flappingDrag = flapping.flappingMoment * (-0.01);
+    
+    return linearDrag + hubDrag + rotationalDrag + flappingDrag;
+}
+
