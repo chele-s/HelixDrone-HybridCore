@@ -15,6 +15,15 @@ if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:AVX2")
 endif()
 
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; print(pybind11.get_cmake_dir())"
+    OUTPUT_VARIABLE _pybind11_dir
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+list(APPEND CMAKE_PREFIX_PATH "${_pybind11_dir}")
 find_package(pybind11 REQUIRED)
 
 include_directories(cpp_core/include)

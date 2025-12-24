@@ -367,13 +367,13 @@ PYBIND11_MODULE(drone_core, m) {
         .def("sample", [](helix::PrioritizedReplayBuffer& self, size_t batchSize) {
             auto result = self.sample(batchSize);
             
-            py::array_t<float> states({batchSize, result.stateDim});
-            py::array_t<float> actions({batchSize, result.actionDim});
-            py::array_t<float> rewards({batchSize, size_t(1)});
-            py::array_t<float> next_states({batchSize, result.stateDim});
-            py::array_t<float> dones({batchSize, size_t(1)});
-            py::array_t<float> weights({batchSize, size_t(1)});
-            py::array_t<int32_t> tree_indices({batchSize});
+            py::array_t<float> states({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(result.stateDim)});
+            py::array_t<float> actions({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(result.actionDim)});
+            py::array_t<float> rewards({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(1)});
+            py::array_t<float> next_states({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(result.stateDim)});
+            py::array_t<float> dones({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(1)});
+            py::array_t<float> weights({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(1)});
+            py::array_t<int32_t> tree_indices({static_cast<py::ssize_t>(batchSize)});
             
             std::memcpy(states.mutable_data(), result.states.data(), batchSize * result.stateDim * sizeof(float));
             std::memcpy(actions.mutable_data(), result.actions.data(), batchSize * result.actionDim * sizeof(float));
@@ -426,11 +426,11 @@ PYBIND11_MODULE(drone_core, m) {
         .def("sample", [](helix::UniformReplayBuffer& self, size_t batchSize, size_t stateDim, size_t actionDim) {
             auto result = self.sample(batchSize);
             
-            py::array_t<float> states({batchSize, stateDim});
-            py::array_t<float> actions({batchSize, actionDim});
-            py::array_t<float> rewards({batchSize, size_t(1)});
-            py::array_t<float> next_states({batchSize, stateDim});
-            py::array_t<float> dones({batchSize, size_t(1)});
+            py::array_t<float> states({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(stateDim)});
+            py::array_t<float> actions({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(actionDim)});
+            py::array_t<float> rewards({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(1)});
+            py::array_t<float> next_states({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(stateDim)});
+            py::array_t<float> dones({static_cast<py::ssize_t>(batchSize), static_cast<py::ssize_t>(1)});
             
             std::memcpy(states.mutable_data(), result.states.data(), batchSize * stateDim * sizeof(float));
             std::memcpy(actions.mutable_data(), result.actions.data(), batchSize * actionDim * sizeof(float));
