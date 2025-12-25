@@ -7,7 +7,7 @@ Quadrotor::Quadrotor() noexcept
     : config_(), motorState_(), motorDynamics_(), flappingState_(), massState_(), imuReading_()
     , physics_(IntegrationMethod::RK4), windModel_(), imuSim_()
     , simulationTime_(0), totalFuelConsumed_(0), lastSubStepCount_(0), lastForce_(), lastTorque_(), windVelocity_()
-    , integrating_(false) {
+    , integrzating_(false) {
     initialize();
 }
 

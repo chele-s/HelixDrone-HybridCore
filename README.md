@@ -162,7 +162,7 @@ All core vector and matrix operations leverage Intel AVX/SSE intrinsics for maxi
 The `Vec3Pack` structure stores 3D vectors in AVX `__m256d` registers (256-bit, 4 doubles):
 
 $$
-\mathbf{v} = \begin{bmatrix} x \\ y \\ z \\ 0 \end{bmatrix} \quad \text{stored as } \texttt{\_\_m256d}
+\mathbf{v} = \begin{bmatrix} x \\ y \\ z \\ 0 \end{bmatrix} \quad \text{stored as } \texttt{\\_\\_m256d}
 $$
 
 **Key Operations:**
