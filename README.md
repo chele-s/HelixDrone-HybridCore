@@ -308,7 +308,7 @@ $$
 Where $P(i) = \frac{p_i^\alpha}{P_{\text{total}}}$ and $\beta$ anneals from $\beta_0$ to 1:
 
 $$
-\beta = \min\left(1, \beta_0 + (1 - \beta_0) \cdot \frac{\text{frame}}{\text{total\_frames}}\right)
+\beta = \min\left(1, \beta_0 + (1 - \beta_0) \cdot \frac{\text{frame}}{\text{total\\_frames}}\right)
 $$
 
 **Normalized weights** (for stable gradients):
