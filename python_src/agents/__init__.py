@@ -12,7 +12,8 @@ from .replay_buffer import (
     ReplayBuffer,
     PrioritizedReplayBuffer,
     NStepReplayBuffer,
-    SumTree
+    SumTree,
+    CppPrioritizedReplayBuffer
 )
 
 from .ddpg_agent import (
@@ -34,6 +35,7 @@ __all__ = [
     'orthogonal_init',
     'ReplayBuffer',
     'PrioritizedReplayBuffer',
+    'CppPrioritizedReplayBuffer',
     'NStepReplayBuffer',
     'SumTree',
     'DDPGAgent',

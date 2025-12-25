@@ -4,6 +4,7 @@ import os
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, ROOT_DIR)
 sys.path.insert(0, os.path.join(ROOT_DIR, 'build', 'Release'))
+sys.path.insert(0, os.path.join(ROOT_DIR, 'build'))
 
 import torch
 import numpy as np
@@ -14,7 +15,7 @@ from collections import deque
 import time
 
 from python_src.envs.drone_env import QuadrotorEnv, EnvConfig, TaskType, VectorizedQuadrotorEnv
-from python_src.agents import TD3Agent, DDPGAgent, PrioritizedReplayBuffer, ReplayBuffer, create_agent
+from python_src.agents import TD3Agent, DDPGAgent, CppPrioritizedReplayBuffer as PrioritizedReplayBuffer, ReplayBuffer, create_agent
 from python_src.utils.helix_math import RunningMeanStd
 
 
@@ -491,7 +492,8 @@ def main():
     print(f"Device: {trainer.device}")
     print(f"State dim: {trainer.state_dim}, Action dim: {trainer.action_dim}")
     print(f"Agent: {train_config.agent_type.upper()}")
-    print(f"Buffer: {'PER' if train_config.use_per else 'Uniform'}")
+    buffer_type = 'PER (C++)' if train_config.use_per and hasattr(trainer.buffer, 'using_cpp') and trainer.buffer.using_cpp else ('PER (Python)' if train_config.use_per else 'Uniform')
+    print(f"Buffer: {buffer_type}")
     print(f"Observation Normalization: {'Enabled' if train_config.use_obs_normalization else 'Disabled'}")
     print(f"Exploration: warmup={train_config.exploration_warmup_steps}, start={train_config.exploration_noise_start}")
     print(f"Total timesteps: {train_config.total_timesteps:,}")

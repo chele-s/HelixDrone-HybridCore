@@ -16,7 +16,6 @@ env/
 
 logs/
 checkpoints/
-replays/
 eval_results/
 CMakeFiles/cmake.check_cache
 CMakeFiles/CMakeConfigureLog.yaml

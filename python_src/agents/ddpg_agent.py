@@ -8,7 +8,7 @@ from pathlib import Path
 import copy
 
 from .networks import Actor, Critic, DeepActor
-from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
+from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer, CppPrioritizedReplayBuffer
 
 
 class OUNoise:
@@ -150,7 +150,7 @@ class DDPGAgent:
         if not replay_buffer.is_ready(batch_size):
             return {}
         
-        is_per = isinstance(replay_buffer, PrioritizedReplayBuffer)
+        is_per = isinstance(replay_buffer, (PrioritizedReplayBuffer, CppPrioritizedReplayBuffer))
         
         if is_per:
             states, actions, rewards, next_states, dones, weights, indices = \
@@ -329,7 +329,7 @@ class TD3Agent:
         
         self._train_steps += 1
         
-        is_per = isinstance(replay_buffer, PrioritizedReplayBuffer)
+        is_per = isinstance(replay_buffer, (PrioritizedReplayBuffer, CppPrioritizedReplayBuffer))
         
         if is_per:
             states, actions, rewards, next_states, dones, weights, indices = \

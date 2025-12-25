@@ -4,6 +4,7 @@ import os
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, ROOT_DIR)
 sys.path.insert(0, os.path.join(ROOT_DIR, 'build', 'Release'))
+sys.path.insert(0, os.path.join(ROOT_DIR, 'build'))
 
 import torch
 import numpy as np
@@ -16,6 +17,7 @@ from python_src.envs.drone_env import QuadrotorEnv, EnvConfig, TaskType
 from python_src.agents import TD3Agent, DDPGAgent, create_agent
 from python_src.utils.csv_logger import CSVLogger, CSVLoggerConfig
 from python_src.utils.visualization import DroneVisualizer, TrajectoryData, VisualizationConfig
+from python_src.utils.helix_math import RunningMeanStd
 
 
 @dataclass
@@ -30,6 +32,7 @@ class ReplayConfig:
     generate_gif: bool = True
     generate_plots: bool = True
     device: str = 'auto'
+    obs_norm_clip: float = 10.0
 
 
 class ReplayGenerator:
@@ -43,6 +46,7 @@ class ReplayGenerator:
         self._setup_device()
         self._setup_env()
         self._load_agent()
+        self._load_normalizer()
         self._setup_logger()
     
     def _setup_device(self):
@@ -71,6 +75,34 @@ class ReplayGenerator:
         else:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
+    def _load_normalizer(self):
+        self.obs_normalizer = None
+        checkpoint_path = Path(self.config.checkpoint_path)
+        
+        normalizer_paths = [
+            checkpoint_path.parent / 'obs_normalizer.npz',
+            checkpoint_path / 'obs_normalizer.npz',
+            Path('checkpoints') / 'obs_normalizer.npz',
+        ]
+        
+        for norm_path in normalizer_paths:
+            if norm_path.exists():
+                self.obs_normalizer = RunningMeanStd(shape=(self.state_dim,))
+                data = np.load(norm_path)
+                self.obs_normalizer.mean = data['mean']
+                self.obs_normalizer.var = data['var']
+                self.obs_normalizer.count = float(data['count'])
+                print(f"  Loaded observation normalizer from: {norm_path}")
+                break
+        
+        if self.obs_normalizer is None:
+            print("  Warning: No observation normalizer found, using raw observations")
+    
+    def _normalize_obs(self, obs: np.ndarray) -> np.ndarray:
+        if self.obs_normalizer is None:
+            return obs
+        return self.obs_normalizer.normalize(obs, clip=self.config.obs_norm_clip)
+    
     def _setup_logger(self):
         logger_config = CSVLoggerConfig(
             output_dir=str(self.output_dir),
@@ -91,7 +123,8 @@ class ReplayGenerator:
             self._generate_episode(ep)
     
     def _generate_episode(self, episode_id: int) -> str:
-        obs, info = self.env.reset(seed=self.config.seed + episode_id)
+        obs_raw, info = self.env.reset(seed=self.config.seed + episode_id)
+        obs = self._normalize_obs(obs_raw)
         target = self.env.target.copy()
         
         self.logger.start_episode(episode_id)
@@ -110,7 +143,8 @@ class ReplayGenerator:
             state = self.env.get_drone_state()
             self.logger.log_step(state, action, 0.0, step * 0.02)
             
-            obs, reward, terminated, truncated, info = self.env.step(action)
+            next_obs_raw, reward, terminated, truncated, info = self.env.step(action)
+            obs = self._normalize_obs(next_obs_raw)
             total_reward += reward
             
             positions.append(info['position'].copy())
@@ -193,6 +227,7 @@ def main():
     parser.add_argument('--no-gif', action='store_true')
     parser.add_argument('--no-plots', action='store_true')
     parser.add_argument('--unity-scale', type=float, default=1.0)
+    parser.add_argument('--obs-norm-clip', type=float, default=10.0)
     args = parser.parse_args()
     
     config = ReplayConfig(
@@ -202,7 +237,8 @@ def main():
         seed=args.seed,
         generate_gif=not args.no_gif,
         generate_plots=not args.no_plots,
-        unity_scale=args.unity_scale
+        unity_scale=args.unity_scale,
+        obs_norm_clip=args.obs_norm_clip
     )
     
     env_config = EnvConfig(
