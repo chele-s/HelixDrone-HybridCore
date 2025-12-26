@@ -117,13 +117,14 @@ struct MotorConfig {
     double efficiency;
     double thermalMass;
     double thermalResistance;
+    double maxRpm;
     ESCConfig esc;
     
     constexpr MotorConfig() noexcept
         : kv(2300), resistance(0.1), inductance(0.00001)
         , torqueConstant(0.0043), frictionCoeff(0.00001)
         , inertia(0.00001), maxCurrent(30), efficiency(0.85)
-        , thermalMass(0.01), thermalResistance(5.0), esc() {}
+        , thermalMass(0.01), thermalResistance(5.0), maxRpm(20000.0), esc() {}
 };
 
 struct BatteryConfig {

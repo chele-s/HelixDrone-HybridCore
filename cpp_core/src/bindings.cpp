@@ -200,6 +200,7 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("efficiency", &MotorConfig::efficiency)
         .def_readwrite("thermal_mass", &MotorConfig::thermalMass)
         .def_readwrite("thermal_resistance", &MotorConfig::thermalResistance)
+        .def_readwrite("max_rpm", &MotorConfig::maxRpm)
         .def_readwrite("esc", &MotorConfig::esc);
     
     py::class_<BatteryConfig>(m, "BatteryConfig")

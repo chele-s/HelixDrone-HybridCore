@@ -23,20 +23,23 @@ class EnvConfig:
     dt: float = 0.01
     physics_sub_steps: int = 4
     max_steps: int = 1000
-    max_rpm: float = 8000.0
+    max_rpm: float = 35000.0
     min_rpm: float = 1000.0
-    hover_rpm: float = 2600.0
-    rpm_range: float = 1500.0
+    hover_rpm: float = 4500.0
+    rpm_range: float = 15000.0
+    mass: float = 0.6
     
     position_scale: float = 5.0
     velocity_scale: float = 5.0
     angular_velocity_scale: float = 10.0
     
+    action_smoothing: float = 0.5
+    
     reward_position: float = -0.5
     reward_velocity: float = -0.025
     reward_angular: float = -0.01
     reward_action: float = -0.0005
-    reward_action_rate: float = -0.0025
+    reward_action_rate: float = -0.1
     reward_alive: float = 1.0
     reward_crash: float = -10.0
     reward_success: float = 50.0
@@ -101,6 +104,7 @@ class QuadrotorEnv(gym.Env):
         self._total_episodes = 0
         self._curriculum_progress = 0.0
         self._saturation_count = 0
+        self._last_applied_action = np.zeros(4, dtype=np.float32)
     
     def _setup_drone(self):
         self._cfg = drone_core.QuadrotorConfig()
@@ -118,7 +122,7 @@ class QuadrotorEnv(gym.Env):
         self._cfg.sub_step.min_sub_step_dt = 0.0001
         self._cfg.sub_step.max_sub_step_dt = 0.005
         
-        self._cfg.mass = 1.0
+        self._cfg.mass = self.config.mass
         self._cfg.arm_length = 0.25
         
         self._cfg.rotor.radius = 0.127
@@ -129,6 +133,7 @@ class QuadrotorEnv(gym.Env):
         
         self._cfg.motor.kv = 2300
         self._cfg.motor.max_current = 30
+        self._cfg.motor.max_rpm = self.config.max_rpm
         self._cfg.motor.esc.nonlinear_gamma = 1.2
         
         self._cfg.aero.air_density = 1.225
@@ -207,6 +212,7 @@ class QuadrotorEnv(gym.Env):
         self._total_episodes += 1
         self._hover_duration = 0
         self._saturation_count = 0
+        self._last_applied_action = np.zeros(4, dtype=np.float32)
         
         if self.config.motor_dynamics:
             warmup_rpm = self.config.hover_rpm
@@ -227,7 +233,14 @@ class QuadrotorEnv(gym.Env):
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
         
-        rpm = self.config.hover_rpm + action * self.config.rpm_range
+        # Action smoothing (Low-Pass Filter)
+        smoothed_action = (
+            self.config.action_smoothing * self._last_applied_action + 
+            (1.0 - self.config.action_smoothing) * action
+        )
+        self._last_applied_action = smoothed_action
+        
+        rpm = self.config.hover_rpm + smoothed_action * self.config.rpm_range
         rpm = np.clip(rpm, self.config.min_rpm, self.config.max_rpm)
         
         cmd = drone_core.MotorCommand(rpm[0], rpm[1], rpm[2], rpm[3])
