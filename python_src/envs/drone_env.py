@@ -110,9 +110,8 @@ class QuadrotorEnv(gym.Env):
         self._last_applied_action = np.zeros(4, dtype=np.float32)
         self._prev_prev_action = np.zeros(4, dtype=np.float32)
         
-        # Butterworth Filter Init (15Hz cutoff at 100Hz sampling)
         fs = 1.0 / self.config.dt
-        fc = 15.0  # Cutoff frequency
+        fc = 15.0 
         w = fc / (fs / 2)
         self._b, self._a = signal.butter(2, w, 'low')
         self._action_buffer = np.zeros((4, 3), dtype=np.float32) # History for filter
@@ -225,6 +224,8 @@ class QuadrotorEnv(gym.Env):
         self._hover_duration = 0
         self._saturation_count = 0
         self._last_applied_action = np.zeros(4, dtype=np.float32)
+        self._prev_prev_action = np.zeros(4, dtype=np.float32)
+        self._action_buffer = np.zeros((4, 3), dtype=np.float32)
         
         if self.config.motor_dynamics:
             warmup_rpm = self.config.hover_rpm
@@ -245,16 +246,9 @@ class QuadrotorEnv(gym.Env):
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
         
-        # Butterworth Filter Application
-        # Shift buffer
         self._action_buffer[:, 2] = self._action_buffer[:, 1]
         self._action_buffer[:, 1] = self._action_buffer[:, 0]
         self._action_buffer[:, 0] = action
-        
-        # Apply filter: y[n] = b0*x[n] + b1*x[n-1] + ... - a1*y[n-1] - ...
-        # Simplified for 2nd order manual implementation to ensure speed
-        # Or using scipy lfilter on the small window (less efficient per step but cleaner code)
-        # Using manual implementation for real-time efficiency:
         
         x = self._action_buffer
         y_new = (self._b[0]*x[:,0] + self._b[1]*x[:,1] + self._b[2]*x[:,2] 
@@ -323,8 +317,6 @@ class QuadrotorEnv(gym.Env):
         action_rate = action - self._prev_action
         action_rate_norm = np.linalg.norm(action_rate)
         
-        # Acceleration: (current_rate - prev_rate)
-        # prev_rate was (prev - prev_prev)
         prev_rate = self._prev_action - getattr(self, '_prev_prev_action_raw', np.zeros_like(action))
         action_accel = action_rate - prev_rate
         action_accel_norm = np.linalg.norm(action_accel)
