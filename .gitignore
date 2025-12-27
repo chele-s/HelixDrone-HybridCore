@@ -44,3 +44,8 @@ drone_core.egg-info/not-zip-safe
 drone_core.egg-info/PKG-INFO
 drone_core.egg-info/SOURCES.txt
 drone_core.egg-info/top_level.txt
+replays/animation_ep0.gif
+replays/state_history_ep0.png
+replays/trajectory_2d_ep0.png
+replays/trajectory_3d_ep0.png
+replays/unity_replay_ep0.csv

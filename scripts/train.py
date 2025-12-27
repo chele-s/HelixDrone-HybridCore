@@ -61,6 +61,7 @@ class TrainConfig:
     seed: int = 42
     device: str = 'auto'
     checkpoint_dir: str = 'checkpoints'
+    resume_from: Optional[str] = None
     
     num_envs: int = 1
 
@@ -240,6 +241,41 @@ class Trainer:
         self.timesteps = 0
         self.episodes = 0
         self.start_time = None
+        
+        if self.config.resume_from:
+            self._resume_from_checkpoint(self.config.resume_from)
+    
+    def _resume_from_checkpoint(self, checkpoint_path: str):
+        checkpoint_path = Path(checkpoint_path)
+        if not checkpoint_path.exists():
+            print(f"[RESUME] Checkpoint not found: {checkpoint_path}")
+            return
+        
+        print(f"[RESUME] Loading from {checkpoint_path}")
+        self.agent.load(checkpoint_path)
+        
+        normalizer_path = checkpoint_path / 'obs_normalizer.npz'
+        if normalizer_path.exists() and self.obs_normalizer is not None:
+            data = np.load(normalizer_path)
+            self.obs_normalizer.mean = data['mean']
+            self.obs_normalizer.var = data['var']
+            self.obs_normalizer.count = data['count']
+            print(f"[RESUME] Loaded observation normalizer")
+        
+        state_path = checkpoint_path / 'training_state.npz'
+        if state_path.exists():
+            state = np.load(state_path)
+            self.timesteps = int(state['timesteps'])
+            self.episodes = int(state['episodes'])
+            self.best_eval_reward = float(state['best_eval_reward'])
+            print(f"[RESUME] Restored state: steps={self.timesteps}, episodes={self.episodes}")
+        else:
+            ckpt_name = checkpoint_path.name
+            if ckpt_name.startswith('step_'):
+                self.timesteps = int(ckpt_name.split('_')[1])
+                print(f"[RESUME] Inferred timesteps from checkpoint name: {self.timesteps}")
+        
+        print(f"[RESUME] Ready to continue training from step {self.timesteps}")
     
     def _normalize_obs(self, obs: np.ndarray, update: bool = True) -> np.ndarray:
         if self.obs_normalizer is None:
@@ -345,11 +381,13 @@ class Trainer:
                     self.agent.save(self.checkpoint_dir / 'best')
             
             if self.timesteps % self.config.save_freq == 0:
-                self.agent.save(self.checkpoint_dir / f'step_{self.timesteps}')
-                self._save_normalizer()
+                ckpt_path = self.checkpoint_dir / f'step_{self.timesteps}'
+                self.agent.save(ckpt_path)
+                self._save_training_state(ckpt_path)
         
-        self.agent.save(self.checkpoint_dir / 'final')
-        self._save_normalizer()
+        final_path = self.checkpoint_dir / 'final'
+        self.agent.save(final_path)
+        self._save_training_state(final_path)
         return history
     
     def _get_action_with_noise(self, obs: np.ndarray, noise_scale: float) -> np.ndarray:
@@ -399,6 +437,22 @@ class Trainer:
                 count=self.obs_normalizer.count
             )
     
+    def _save_training_state(self, ckpt_path: Path):
+        self._save_normalizer()
+        if self.obs_normalizer is not None:
+            np.savez(
+                ckpt_path / 'obs_normalizer.npz',
+                mean=self.obs_normalizer.mean,
+                var=self.obs_normalizer.var,
+                count=self.obs_normalizer.count
+            )
+        np.savez(
+            ckpt_path / 'training_state.npz',
+            timesteps=self.timesteps,
+            episodes=self.episodes,
+            best_eval_reward=self.best_eval_reward
+        )
+    
     def load_normalizer(self, path: Path):
         if self.obs_normalizer is not None:
             data = np.load(path)
@@ -410,7 +464,7 @@ class Trainer:
 def main():
     train_config = TrainConfig(
         agent_type='td3',
-        total_timesteps=1_000_000,
+        total_timesteps=3_000_000,
         batch_size=256,
         buffer_size=1_000_000,
         learning_starts=10_000,
@@ -444,23 +498,33 @@ def main():
         log_freq=2000,
         
         seed=42,
-        num_envs=4
+        num_envs=4,
+        resume_from='checkpoints/final'
     )
     
     env_config = EnvConfig(
         dt=0.01,
-        physics_sub_steps=4,
+        physics_sub_steps=8,
         use_sub_stepping=True,
         max_steps=1000,
         domain_randomization=False,
         wind_enabled=False,
         motor_dynamics=True,
         
+        mass=0.6,
+        max_rpm=35000.0,
+        min_rpm=1000.0,
+        hover_rpm=4500.0,
+        rpm_range=15000.0,
+        
+        action_smoothing=0.5,
+        
         reward_position=-0.25,
         reward_velocity=-0.01,
         reward_angular=-0.005,
-        reward_action=-0.0005,
-        reward_action_rate=-0.001,
+        reward_action=-0.001,
+        reward_action_rate=-0.1,    # Strong damping on rate
+        reward_action_accel=-0.05,  # Damping on acceleration (prevents chattering)
         reward_alive=1.0,
         reward_crash=-5.0,
         reward_success=100.0,
@@ -468,8 +532,8 @@ def main():
         reward_stability_bonus=0.5,
         reward_hover_bonus=1.5,
         
-        reward_saturation_penalty=-0.01,
-        saturation_threshold=0.95,
+        reward_saturation_penalty=-0.05,
+        saturation_threshold=0.90,
         
         crash_height=0.05,
         crash_distance=10.0,
@@ -483,6 +547,7 @@ def main():
         curriculum_max_range=0.5,
         curriculum_progress_rate=0.00002
     )
+
     
     trainer = Trainer(train_config, env_config)
     

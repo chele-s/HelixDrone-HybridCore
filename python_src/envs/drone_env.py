@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build', 
 
 import gymnasium as gym
 import numpy as np
+from scipy import signal
 from typing import Tuple, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import IntEnum
@@ -40,6 +41,7 @@ class EnvConfig:
     reward_angular: float = -0.01
     reward_action: float = -0.0005
     reward_action_rate: float = -0.1
+    reward_action_accel: float = -0.05
     reward_alive: float = 1.0
     reward_crash: float = -10.0
     reward_success: float = 50.0
@@ -103,8 +105,17 @@ class QuadrotorEnv(gym.Env):
         self._rng = np.random.default_rng()
         self._total_episodes = 0
         self._curriculum_progress = 0.0
+        self._curriculum_progress = 0.0
         self._saturation_count = 0
         self._last_applied_action = np.zeros(4, dtype=np.float32)
+        self._prev_prev_action = np.zeros(4, dtype=np.float32)
+        
+        # Butterworth Filter Init (15Hz cutoff at 100Hz sampling)
+        fs = 1.0 / self.config.dt
+        fc = 15.0  # Cutoff frequency
+        w = fc / (fs / 2)
+        self._b, self._a = signal.butter(2, w, 'low')
+        self._action_buffer = np.zeros((4, 3), dtype=np.float32) # History for filter
     
     def _setup_drone(self):
         self._cfg = drone_core.QuadrotorConfig()
@@ -139,6 +150,7 @@ class QuadrotorEnv(gym.Env):
         self._cfg.aero.air_density = 1.225
         self._cfg.aero.ground_effect_coeff = 0.5
         
+        print(f"[DEBUG] Drone Configured: Mass={self._cfg.mass:.4f} kg, Max RPM={self._cfg.motor.max_rpm:.1f}")
         self._drone = drone_core.Quadrotor(self._cfg)
     
     def _apply_domain_randomization(self):
@@ -146,7 +158,7 @@ class QuadrotorEnv(gym.Env):
             return
         
         mass_factor = self._rng.uniform(0.9, 1.1)
-        self._cfg.mass = 1.0 * mass_factor
+        self._cfg.mass = self.config.mass * mass_factor
         
         if self.config.wind_enabled:
             wind_speed = self._rng.uniform(0, 3)
@@ -233,11 +245,24 @@ class QuadrotorEnv(gym.Env):
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
         
-        # Action smoothing (Low-Pass Filter)
-        smoothed_action = (
-            self.config.action_smoothing * self._last_applied_action + 
-            (1.0 - self.config.action_smoothing) * action
-        )
+        # Butterworth Filter Application
+        # Shift buffer
+        self._action_buffer[:, 2] = self._action_buffer[:, 1]
+        self._action_buffer[:, 1] = self._action_buffer[:, 0]
+        self._action_buffer[:, 0] = action
+        
+        # Apply filter: y[n] = b0*x[n] + b1*x[n-1] + ... - a1*y[n-1] - ...
+        # Simplified for 2nd order manual implementation to ensure speed
+        # Or using scipy lfilter on the small window (less efficient per step but cleaner code)
+        # Using manual implementation for real-time efficiency:
+        
+        x = self._action_buffer
+        y_new = (self._b[0]*x[:,0] + self._b[1]*x[:,1] + self._b[2]*x[:,2] 
+                 - self._a[1]*self._last_applied_action - self._a[2]*self._prev_prev_action) / self._a[0]
+        
+        smoothed_action = y_new
+        
+        self._prev_prev_action = self._last_applied_action
         self._last_applied_action = smoothed_action
         
         rpm = self.config.hover_rpm + smoothed_action * self.config.rpm_range
@@ -256,6 +281,7 @@ class QuadrotorEnv(gym.Env):
         reward, terminated = self._compute_reward(action)
         truncated = self._steps >= self.config.max_steps
         
+        self._prev_prev_action_raw = self._prev_action.copy()
         self._prev_action = action.copy()
         self._episode_reward += reward
         
@@ -294,7 +320,14 @@ class QuadrotorEnv(gym.Env):
         ang_speed = np.linalg.norm(ang_vel)
         
         action_norm = np.linalg.norm(action)
-        action_rate_norm = np.linalg.norm(action - self._prev_action)
+        action_rate = action - self._prev_action
+        action_rate_norm = np.linalg.norm(action_rate)
+        
+        # Acceleration: (current_rate - prev_rate)
+        # prev_rate was (prev - prev_prev)
+        prev_rate = self._prev_action - getattr(self, '_prev_prev_action_raw', np.zeros_like(action))
+        action_accel = action_rate - prev_rate
+        action_accel_norm = np.linalg.norm(action_accel)
         
         reward = self.config.reward_alive
         
@@ -310,6 +343,7 @@ class QuadrotorEnv(gym.Env):
         reward += self.config.reward_angular * min(ang_speed, 10.0)
         reward += self.config.reward_action * action_norm
         reward += self.config.reward_action_rate * action_rate_norm
+        reward += self.config.reward_action_accel * action_accel_norm
         
         saturated_actions = np.sum(np.abs(action) > self.config.saturation_threshold)
         if saturated_actions > 0:
