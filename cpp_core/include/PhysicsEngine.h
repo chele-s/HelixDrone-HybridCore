@@ -101,7 +101,7 @@ struct RotorConfig {
     BladeFlappingConfig flapping;
     
     constexpr RotorConfig() noexcept
-        : radius(0.127), chord(0.02), pitchAngle(0.26)
+        : radius(0.127), chord(0.02), pitchAngle(0.18)
         , liftSlope(5.7), dragCoeff(0.01), inflowRatio(0.05)
         , direction(RotorDirection::CCW), flapping() {}
 };

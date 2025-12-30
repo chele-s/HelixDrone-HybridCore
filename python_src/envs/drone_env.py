@@ -25,9 +25,9 @@ class EnvConfig:
     physics_sub_steps: int = 4
     max_steps: int = 1000
     max_rpm: float = 35000.0
-    min_rpm: float = 1000.0
-    hover_rpm: float = 4500.0
-    rpm_range: float = 15000.0
+    min_rpm: float = 2000.0
+    hover_rpm: float = 2750.0
+    rpm_range: float = 2000.0
     mass: float = 0.6
     
     position_scale: float = 5.0
@@ -42,6 +42,7 @@ class EnvConfig:
     reward_action: float = -0.0005
     reward_action_rate: float = -0.1
     reward_action_accel: float = -0.05
+    reward_action_jerk: float = -0.05
     reward_alive: float = 1.0
     reward_crash: float = -10.0
     reward_success: float = 50.0
@@ -111,10 +112,11 @@ class QuadrotorEnv(gym.Env):
         self._prev_prev_action = np.zeros(4, dtype=np.float32)
         
         fs = 1.0 / self.config.dt
-        fc = 15.0 
+        fc = 40.0
         w = fc / (fs / 2)
+        w = min(w, 0.99)
         self._b, self._a = signal.butter(2, w, 'low')
-        self._action_buffer = np.zeros((4, 3), dtype=np.float32) # History for filter
+        self._action_buffer = np.zeros((4, 3), dtype=np.float32)
     
     def _setup_drone(self):
         self._cfg = drone_core.QuadrotorConfig()
@@ -137,7 +139,7 @@ class QuadrotorEnv(gym.Env):
         
         self._cfg.rotor.radius = 0.127
         self._cfg.rotor.chord = 0.02
-        self._cfg.rotor.pitch_angle = 0.26
+        self._cfg.rotor.pitch_angle = 0.18
         self._cfg.rotor.flapping.enabled = True
         self._cfg.rotor.flapping.lock_number = 8.0
         
@@ -226,6 +228,9 @@ class QuadrotorEnv(gym.Env):
         self._last_applied_action = np.zeros(4, dtype=np.float32)
         self._prev_prev_action = np.zeros(4, dtype=np.float32)
         self._action_buffer = np.zeros((4, 3), dtype=np.float32)
+        self._prev_rpm = np.full(4, self.config.hover_rpm, dtype=np.float32)
+        self._integral_error = 0.0
+        self._prev_vel_z = 0.0
         
         if self.config.motor_dynamics:
             warmup_rpm = self.config.hover_rpm
@@ -261,6 +266,13 @@ class QuadrotorEnv(gym.Env):
         
         rpm = self.config.hover_rpm + smoothed_action * self.config.rpm_range
         rpm = np.clip(rpm, self.config.min_rpm, self.config.max_rpm)
+        
+        max_rpm_change = 45000.0 * self.config.dt
+        if hasattr(self, '_prev_rpm'):
+            rpm_delta = rpm - self._prev_rpm
+            rpm_delta = np.clip(rpm_delta, -max_rpm_change, max_rpm_change)
+            rpm = self._prev_rpm + rpm_delta
+        self._prev_rpm = rpm.copy()
         
         cmd = drone_core.MotorCommand(rpm[0], rpm[1], rpm[2], rpm[3])
         
@@ -307,51 +319,74 @@ class QuadrotorEnv(gym.Env):
         ang_vel = np.array([s.angular_velocity.x, s.angular_velocity.y, s.angular_velocity.z])
         
         euler = s.orientation.to_euler_zyx()
-        roll, pitch = abs(euler.x), abs(euler.y)
+        roll, pitch, yaw = abs(euler.x), abs(euler.y), euler.z
         
-        dist = np.linalg.norm(self.target - pos)
+        error_vec = self.target - pos
+        dist = np.linalg.norm(error_vec)
         speed = np.linalg.norm(vel)
-        ang_speed = np.linalg.norm(ang_vel)
+        omega_xy = np.linalg.norm(ang_vel[:2])
+        omega_z = abs(ang_vel[2])
         
-        action_norm = np.linalg.norm(action)
-        action_rate = action - self._prev_action
-        action_rate_norm = np.linalg.norm(action_rate)
+        prev_dist = getattr(self, '_prev_dist', dist)
+        self._prev_dist = dist
         
-        prev_rate = self._prev_action - getattr(self, '_prev_prev_action_raw', np.zeros_like(action))
-        action_accel = action_rate - prev_rate
-        action_accel_norm = np.linalg.norm(action_accel)
+        r_progress = (prev_dist - dist) * 3.0
         
-        reward = self.config.reward_alive
+        r_proximity = np.exp(-dist * 2.0) * 1.5
         
-        dist_reward = np.exp(-dist * 0.5)
-        reward += dist_reward * 1.0
+        target_dir = error_vec / (dist + 1e-6)
+        forward_body = np.array([np.cos(yaw), np.sin(yaw), 0])
+        heading_alignment = np.dot(forward_body[:2], target_dir[:2])
+        r_heading = heading_alignment * 2.0
         
-        vel_reward = np.exp(-speed * 0.5)
-        reward += vel_reward * 0.25
+        action_diff = np.linalg.norm(self._prev_action - action) if hasattr(self, '_prev_action') else 0.0
+        r_smooth = -action_diff ** 2 * 0.5
         
-        stability_factor = np.exp(-(roll + pitch) * 3.0)
-        reward += self.config.reward_stability_bonus * stability_factor
+        r_stability = -omega_xy * 0.1
         
-        reward += self.config.reward_angular * min(ang_speed, 10.0)
-        reward += self.config.reward_action * action_norm
-        reward += self.config.reward_action_rate * action_rate_norm
-        reward += self.config.reward_action_accel * action_accel_norm
+        r_orientation = np.exp(-(roll + pitch) * 5.0) * 2.0
         
-        saturated_actions = np.sum(np.abs(action) > self.config.saturation_threshold)
-        if saturated_actions > 0:
-            self._saturation_count += 1
-            reward += self.config.reward_saturation_penalty * saturated_actions
-            
-            saturation_severity = np.sum(np.maximum(0, np.abs(action) - self.config.saturation_threshold))
-            reward += self.config.reward_saturation_penalty * saturation_severity * 2.0
+        hover_rpm = self.config.hover_rpm
+        if hasattr(self, '_current_rpm'):
+            rpm_deviation = np.mean((self._current_rpm - hover_rpm) ** 2)
+            r_efficiency = -rpm_deviation * 1e-8
+        else:
+            r_efficiency = 0.0
         
-        is_hovering = dist < 1.0 and speed < 1.0 and roll < 0.3 and pitch < 0.3
+        if speed < 0.5:
+            r_anti_spin = -omega_z * 0.3
+        else:
+            r_anti_spin = -omega_z * 0.05
+        
+        r_anti_kamikaze = 0.0
+        if dist < 1.0 and speed > 2.0:
+            r_anti_kamikaze = -1.0
+        
+        altitude = pos[2]
+        if altitude < 0.3:
+            r_ground = -(0.3 - altitude) * 5.0
+        else:
+            r_ground = 0.0
+        
+        reward = (
+            r_progress +
+            r_proximity +
+            r_heading +
+            r_smooth +
+            r_stability +
+            r_orientation +
+            r_efficiency +
+            r_anti_spin +
+            r_anti_kamikaze +
+            r_ground
+        )
+        
+        is_hovering = dist < 0.3 and speed < 0.3 and roll < 0.15 and pitch < 0.15
         if is_hovering:
             self._hover_duration += 1
-            hover_bonus = min(self._hover_duration / 50.0, 2.0) * self.config.reward_hover_bonus
-            reward += hover_bonus
+            reward += min(self._hover_duration / 20.0, 4.0)
         else:
-            self._hover_duration = max(0, self._hover_duration - 2)
+            self._hover_duration = max(0, self._hover_duration - 1)
         
         terminated = False
         crashed = False
@@ -364,13 +399,12 @@ class QuadrotorEnv(gym.Env):
             crashed = True
 
         if crashed:
-            survival_bonus = min(1.0, self._steps / 200.0)
-            reward += self.config.reward_crash * (1.0 - 0.3 * survival_bonus)
+            reward = -100.0
             terminated = True
         
         if dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
-            reward += 0.5
+            reward += 2.0
         else:
             self._success_counter = max(0, self._success_counter - 1)
         
