@@ -23,11 +23,11 @@ replay_buffer:
   per_beta_start: 0.5
 
 training:
-  total_timesteps: 500000
-  batch_size: 512
-  learning_starts: 10000
-  train_freq: 20
-  gradient_steps: 10
+  total_timesteps: 5000000
+  batch_size: 256
+  learning_starts: 25000
+  train_freq: 2
+  gradient_steps: 2
 
 evaluation:
   freq: 10000
@@ -39,13 +39,22 @@ checkpointing:
   dir: checkpoints
 
 environment:
-  dt: 0.02
+  dt: 0.01
   max_steps: 1000
-  num_envs: 1
+  num_envs: 4
   task: hover
   domain_randomization: true
   wind_enabled: true
   motor_dynamics: true
+  physics_sub_steps: 8
+  use_sub_stepping: false
+  min_rpm: 2000.0
+  hover_rpm: 2750.0
+  max_rpm: 35000.0
+  rpm_range: 2000.0
+  mass: 0.6
+  action_smoothing: 0.5
+  saturation_threshold: 0.9
 
 observation:
   position_scale: 5.0
@@ -53,22 +62,34 @@ observation:
   angular_velocity_scale: 10.0
 
 rewards:
-  position: -3.0
-  velocity: -0.2
-  angular: -0.1
-  action: -0.005
-  action_rate: -0.05
-  alive: 1.0
+  position: 5.0
+  velocity: 1.0
+  angular: -0.2
+  action: -0.001
+  action_rate: -0.5
+  action_accel: -0.3
+  action_jerk: -0.1
+  alive: 0.0
   crash: -100.0
   success: 100.0
+  height_bonus: 0.5
+  stability_bonus: 1.0
+  hover_bonus: 1.5
+  saturation_penalty: -0.1
 
 termination:
   crash_height: 0.05
-  crash_distance: 8.0
-  crash_angle: 1.2
+  crash_distance: 3.0
+  crash_angle: 0.5
   success_distance: 0.1
   success_velocity: 0.2
   success_hold_steps: 50
+
+curriculum:
+  enabled: true
+  init_range: 0.1
+  max_range: 0.5
+  progress_rate: 0.00005
 
 seed: 42
 device: auto

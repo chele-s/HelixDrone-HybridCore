@@ -187,7 +187,7 @@ void Quadrotor::updateMotorDynamics(const MotorCommand& command, double dt) noex
         }
     } else if (config_.enableMotorDynamics) {
         for (int i = 0; i < 4; ++i) {
-            double targetRPM = std::clamp(command.rpm[i], 0.0, 20000.0);
+            double targetRPM = std::clamp(command.rpm[i], 0.0, config_.motor.maxRpm);
             
             motorState_.rpm[i] = PhysicsEngine::computeMotorRPM(
                 targetRPM, motorState_.rpm[i], voltage, dt, config_.motor
@@ -199,7 +199,7 @@ void Quadrotor::updateMotorDynamics(const MotorCommand& command, double dt) noex
         }
     } else {
         for (int i = 0; i < 4; ++i) {
-            double targetRPM = std::clamp(command.rpm[i], 0.0, 20000.0);
+            double targetRPM = std::clamp(command.rpm[i], 0.0, config_.motor.maxRpm);
             double alpha = dt / (0.02 + dt);
             motorState_.rpm[i] += alpha * (targetRPM - motorState_.rpm[i]);
             motorState_.current[i] = 0;

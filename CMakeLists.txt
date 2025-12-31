@@ -31,6 +31,11 @@ include_directories(cpp_core/include)
 set(PHYSICS_SOURCES
     cpp_core/src/Quadrotor.cpp
     cpp_core/src/PhysicsEngine.cpp
+    cpp_core/src/SOTAActuator.cpp
+    cpp_core/src/StateEstimator.cpp
+    cpp_core/src/ActuatorFailure.cpp
+    cpp_core/src/CollisionWorld.cpp
+    cpp_core/src/PayloadDynamics.cpp
 )
 
 pybind11_add_module(drone_core 
@@ -44,6 +49,6 @@ add_library(helix_physics STATIC ${PHYSICS_SOURCES})
 target_include_directories(helix_physics PUBLIC cpp_core/include)
 target_compile_definitions(helix_physics PRIVATE _USE_MATH_DEFINES)
 
-add_executable(sota_test_physics tests/test_physics.cpp cpp_core/src/Quadrotor.cpp cpp_core/src/PhysicsEngine.cpp)
+add_executable(sota_test_physics tests/test_physics.cpp cpp_core/src/Quadrotor.cpp cpp_core/src/PhysicsEngine.cpp cpp_core/src/SOTAActuator.cpp)
 target_include_directories(sota_test_physics PRIVATE cpp_core/include)
 target_compile_definitions(sota_test_physics PRIVATE _USE_MATH_DEFINES)

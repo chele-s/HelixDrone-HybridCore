@@ -95,6 +95,38 @@
 - **Battery Simulation**: State-of-charge dependent voltage with internal resistance under load.
 - **IMU Simulation**: Accelerometer, gyroscope, magnetometer with configurable noise and bias injection.
 
+### State Estimation (SOTA ESKF)
+
+- **Error-State Kalman Filter (ESKF)**: 15-dimensional error state with Joseph-form covariance update for numerical stability.
+- **Quaternion Convention**: $\delta q \otimes q$ (error in global frame) with proper reset Jacobian $G$.
+- **Gyro Cross-Term**: Includes $[\omega\times]\delta\theta$ in process model for accurate attitude estimation.
+- **Yaw-Only Magnetometer**: Projects magnetometer onto horizontal plane to avoid pitch/roll leakage.
+- **NEES Computation**: Normalized Estimation Error Squared for filter consistency monitoring.
+- **Observability Checks**: `isYawObservable()`, `isAccelValid()` for robust sensor fusion.
+
+### Payload Dynamics (SOTA XPBD)
+
+- **Unified XPBD System**: N-link cable with payload as final particle for correct momentum conservation.
+- **XPBD-Internal Damping**: Velocity projection in constraints (Galilean invariant, no "ether drag").
+- **Sub-Step Interpolation**: Drone pose/velocity lerped within physics sub-steps to prevent aliasing.
+- **Ground as XPBD Constraint**: Inequality constraint in solver for natural restitution and friction.
+- **Prestabilization**: 50 iterations at initialization to prevent initial cable oscillations.
+- **Cable Angle Sensor**: Gaussian noise simulation for realistic closed-loop control.
+- **LQR Swing Controller**: Input shaping with 500-sample buffer and linear interpolation.
+
+### Collision Detection
+
+- **Multi-Shape Colliders**: AABB, Sphere, Cylinder, Plane with contact normal computation.
+- **Broadphase Spatial Hashing**: O(1) candidate pair identification.
+- **Raycasting**: Line-of-sight, ground intersection, obstacle avoidance queries.
+- **Environment Generators**: Random obstacle fields, urban canyons, indoor rooms.
+
+### Actuator Failures
+
+- **8 Failure Modes**: Stuck, reduced power, oscillating, delayed response, random cutout, torque loss, bearing damage, ESC failure.
+- **Failure Injection**: Configurable time, duration, and severity per motor.
+- **Scenario Generator**: Randomized failure profiles for robustness training.
+
 ### Reinforcement Learning (Python)
 
 - **Algorithms**: TD3 (Twin Delayed DDPG) and DDPG with Clipped Double Q-Learning.
@@ -106,6 +138,15 @@
   - Domain randomization (mass, wind, initial conditions).
   - Vectorized environments for parallel data collection.
 - **Gymnasium Integration**: Standard API for observation/action spaces, rewards, and termination.
+
+### Gymnasium Environment (SOTA)
+
+- **Observation Modes**: `TRUE_STATE`, `ESTIMATED` (ESKF), `SENSOR_ONLY` for varying realism.
+- **Task Types**: `HOVER`, `WAYPOINT`, `TRAJECTORY`, `PAYLOAD_HOVER`, `PAYLOAD_TRANSPORT`.
+- **Modular Observation Builder**: Composable observation components with automatic space inference.
+- **Composable Reward Builder**: Plug-and-play reward terms for position, orientation, swing penalty, etc.
+- **Payload Integration**: Full XPBD cable + CableAngleSensor for anti-swing control training.
+- **SB3 Compatible**: Works with Stable-Baselines3, CleanRL, and any Gymnasium-compliant library.
 
 ### Visualization and Logging
 
@@ -242,6 +283,82 @@ $$
 2(xz - wy) & 2(yz + wx) & 1 - 2(x^2 + y^2)
 \end{bmatrix}
 $$
+
+#### Safe Mathematics
+
+Robust implementations to prevent NaN propagation in degenerate cases:
+
+**Safe Normalize:**
+
+$$
+\texttt{safeNormalize}(\mathbf{v}) = \begin{cases}
+\mathbf{v} / \|\mathbf{v}\| & \|\mathbf{v}\| > \epsilon \\
+\mathbf{0} & \text{otherwise}
+\end{cases}
+$$
+
+Where $\epsilon = 10^{-8}$ (SAFE_NORM_EPSILON). Prevents division-by-zero in constraint solvers.
+
+**Safe Length:**
+
+```cpp
+double safeLength(const Vec3& v) noexcept {
+    double len_sq = v.x*v.x + v.y*v.y + v.z*v.z;
+    return (len_sq < EPSILON*EPSILON) ? 0.0 : sqrt(len_sq);
+}
+```
+
+#### XPBD Constraint Solving
+
+**Extended Position Based Dynamics** for cable and ground constraints:
+
+**Distance Constraint (Cable Links):**
+
+$$
+C(\mathbf{p}_1, \mathbf{p}_2) = \|\mathbf{p}_1 - \mathbf{p}_2\| - L_0
+$$
+
+**XPBD Position Correction:**
+
+$$
+\Delta \mathbf{p}_1 = -\frac{w_1}{w_1 + w_2 + \tilde{\alpha}} C \cdot \hat{\mathbf{n}}
+$$
+
+Where $w_i = 1/m_i$ (inverse mass), $\tilde{\alpha} = \alpha / \Delta t^2$ (scaled compliance), and $\hat{\mathbf{n}} = \texttt{safeNormalize}(\mathbf{p}_1 - \mathbf{p}_2)$.
+
+**XPBD-Internal Damping:**
+
+$$
+\Delta \mathbf{v}_{\text{proj}} = \beta \cdot (\mathbf{v}_{\text{rel}} \cdot \hat{\mathbf{n}}) \cdot \hat{\mathbf{n}}
+$$
+
+Damps only relative velocity along the constraint direction (Galilean invariant, no "ether drag").
+
+**Ground Constraint (Inequality):**
+
+$$
+C(\mathbf{p}) = \max(0, h_{\text{ground}} - p_z)
+$$
+
+Only active when particle is below ground level.
+
+#### Linear Interpolation (Lerp)
+
+Used for smooth control signals and sub-step interpolation:
+
+$$
+\texttt{lerp}(a, b, t) = (1 - t) \cdot a + t \cdot b
+$$
+
+**Input Shaper Interpolation:**
+
+Given samples at times $t_1, t_2$ with commands $c_1, c_2$:
+
+$$
+c(t) = c_1 + \frac{t - t_1}{t_2 - t_1} (c_2 - c_1)
+$$
+
+Eliminates step discontinuities in delayed control signals.
 
 ---
 
@@ -918,6 +1035,206 @@ Where $\tilde{a}' = \pi_{\theta'}(s') + \epsilon$, $\epsilon \sim \text{clip}(\m
 
 ---
 
+### 10. Error-State Kalman Filter (ESKF)
+
+The ESKF provides robust state estimation by maintaining a nominal state and estimating errors around it.
+
+#### State Representation
+
+**Nominal State (16-dim):**
+
+$$
+\mathbf{x} = \begin{bmatrix} \mathbf{p} \\ \mathbf{v} \\ \mathbf{q} \\ \mathbf{b}_a \\ \mathbf{b}_g \end{bmatrix} \in \mathbb{R}^{16}
+$$
+
+**Error State (15-dim):**
+
+$$
+\delta\mathbf{x} = \begin{bmatrix} \delta\mathbf{p} \\ \delta\mathbf{v} \\ \delta\boldsymbol{\theta} \\ \delta\mathbf{b}_a \\ \delta\mathbf{b}_g \end{bmatrix} \in \mathbb{R}^{15}
+$$
+
+#### Quaternion Error Convention
+
+Using $\delta\mathbf{q} \otimes \mathbf{q}$ (error in global frame):
+
+$$
+\mathbf{q}_{\text{true}} = \delta\mathbf{q} \otimes \mathbf{q}_{\text{nominal}}
+$$
+
+Where $\delta\mathbf{q} \approx \begin{bmatrix} 1 \\ \frac{1}{2}\delta\boldsymbol{\theta} \end{bmatrix}$ for small angles.
+
+#### Process Model
+
+**Continuous-time error dynamics:**
+
+$$
+\delta\dot{\mathbf{p}} = \delta\mathbf{v}
+$$
+
+$$
+\delta\dot{\mathbf{v}} = -\mathbf{R}[\mathbf{a}_m - \mathbf{b}_a]_\times \delta\boldsymbol{\theta} - \mathbf{R}\delta\mathbf{b}_a + \mathbf{n}_a
+$$
+
+$$
+\delta\dot{\boldsymbol{\theta}} = -[\boldsymbol{\omega}_m - \mathbf{b}_g]_\times \delta\boldsymbol{\theta} - \delta\mathbf{b}_g + \mathbf{n}_g
+$$
+
+**Gyro Cross-Term:** The term $-[\boldsymbol{\omega}]_\times \delta\boldsymbol{\theta}$ captures how body rotation affects attitude error propagation.
+
+#### Measurement Updates
+
+**GPS Position (3D):**
+
+$$
+\mathbf{H}_{\text{GPS}} = \begin{bmatrix} \mathbf{I}_3 & \mathbf{0}_{3\times12} \end{bmatrix}
+$$
+
+**Yaw-Only Magnetometer:**
+
+Project measurement to horizontal plane to avoid pitch/roll leakage:
+
+$$
+\psi_{\text{meas}} = \text{atan2}(m_y, m_x)
+$$
+
+$$
+\mathbf{H}_{\text{mag}} = \begin{bmatrix} \mathbf{0}_{1\times6} & [0, 0, 1] & \mathbf{0}_{1\times6} \end{bmatrix}
+$$
+
+#### Joseph-Form Covariance Update
+
+For numerical stability:
+
+$$
+\mathbf{P}^+ = (\mathbf{I} - \mathbf{K}\mathbf{H})\mathbf{P}^-(\mathbf{I} - \mathbf{K}\mathbf{H})^T + \mathbf{K}\mathbf{R}\mathbf{K}^T
+$$
+
+#### State Reset
+
+After correction, inject error into nominal state:
+
+$$
+\mathbf{q}^+ = \delta\mathbf{q} \otimes \mathbf{q}^-
+$$
+
+Reset covariance with Jacobian $\mathbf{G}$:
+
+$$
+\mathbf{P}^+ = \mathbf{G}\mathbf{P}^-\mathbf{G}^T
+$$
+
+#### NEES (Normalized Estimation Error Squared)
+
+Filter consistency metric:
+
+$$
+\text{NEES} = \delta\mathbf{x}^T \mathbf{P}^{-1} \delta\mathbf{x}
+$$
+
+Should follow $\chi^2(n)$ distribution where $n = 15$.
+
+---
+
+### 11. Payload and Cable Dynamics (XPBD)
+
+Multi-link cable with suspended payload using Extended Position Based Dynamics.
+
+#### N-Link Cable Model
+
+Cable discretized into $N$ particles connected by distance constraints:
+
+$$
+\mathbf{p}_0 \to \mathbf{p}_1 \to \cdots \to \mathbf{p}_N
+$$
+
+Where $\mathbf{p}_0$ is the anchor (drone attachment) and $\mathbf{p}_N$ is the payload.
+
+#### Particle Masses
+
+**Cable particles:**
+
+$$
+m_i = \rho_L \cdot \frac{L_0}{N-1}, \quad i \in [1, N-1]
+$$
+
+**Payload (last particle):**
+
+$$
+m_N = m_{\text{payload}}
+$$
+
+#### XPBD Integration Loop
+
+For each sub-step:
+
+1. **Apply external forces** (gravity, drag):
+
+$$
+\mathbf{v}_i \leftarrow \mathbf{v}_i + \Delta t \cdot \mathbf{g}
+$$
+
+2. **Predict positions:**
+
+$$
+\tilde{\mathbf{p}}_i = \mathbf{p}_i + \Delta t \cdot \mathbf{v}_i
+$$
+
+3. **Solve constraints** (iterate $K$ times):
+
+$$
+\Delta\mathbf{p}_i = -\frac{w_i}{w_i + w_j + \tilde{\alpha}} C \cdot \hat{\mathbf{n}}
+$$
+
+4. **Update velocities:**
+
+$$
+\mathbf{v}_i = \frac{\mathbf{p}_i^{\text{new}} - \mathbf{p}_i^{\text{old}}}{\Delta t}
+$$
+
+#### XPBD-Internal Damping
+
+Damp only relative velocity along constraint direction:
+
+$$
+\mathbf{v}_{\text{rel}} = \mathbf{v}_i - \mathbf{v}_j
+$$
+
+$$
+v_{\text{proj}} = \mathbf{v}_{\text{rel}} \cdot \hat{\mathbf{n}}
+$$
+
+$$
+\Delta\mathbf{v}_i = -\beta \cdot w_i \cdot v_{\text{proj}} \cdot \hat{\mathbf{n}}
+$$
+
+This is **Galilean invariant** — no damping relative to world frame.
+
+#### Potential Energy (Relative to Anchor)
+
+For energy-based control, PE measured from anchor height:
+
+$$
+PE = \sum_{i=1}^{N} m_i g (p_{i,z} - p_{0,z})
+$$
+
+#### Input Shaping for Swing Control
+
+Zero-Vibration (ZV) input shaper with delay:
+
+$$
+T = 2\pi \sqrt{\frac{L}{g}}
+$$
+
+Delayed command retrieved with linear interpolation:
+
+$$
+\mathbf{u}(t - T/2) = \texttt{lerp}(\mathbf{u}_{k}, \mathbf{u}_{k+1}, \alpha)
+$$
+
+Where $\alpha = \frac{t - t_k}{t_{k+1} - t_k}$.
+
+---
+
 ## System Architecture
 
 HelixDrone employs a **hybrid architecture** separating performance-critical physics from flexible RL training.
@@ -1015,6 +1332,48 @@ print(drone_core.__version__)
 python scripts/train.py
 ```
 
+### Payload Transport Training
+
+```python
+from python_src.envs import QuadrotorEnvV2, TaskType, ExtendedEnvConfig
+
+# Create environment for payload training
+config = ExtendedEnvConfig(
+    payload_enabled=True,
+    cable_length=1.0,
+    observation_mode='estimated',  # Uses ESKF
+)
+env = QuadrotorEnvV2(config=config, task=TaskType.PAYLOAD_HOVER)
+
+print(f"Observation space: {env.observation_space.shape}")  # (33,) with payload
+print(f"Action space: {env.action_space.shape}")  # (4,)
+```
+
+### Observation Modes
+
+```python
+# TRUE_STATE: Direct physics state (fastest training)
+config = ExtendedEnvConfig(observation_mode='true_state')
+
+# ESTIMATED: Uses ESKF output (realistic, sensor noise)
+config = ExtendedEnvConfig(observation_mode='estimated', use_eskf=True)
+
+# SENSOR_ONLY: Raw IMU/GPS/Baro (most realistic, hardest)
+config = ExtendedEnvConfig(observation_mode='sensor_only')
+```
+
+### Stable-Baselines3 Integration
+
+```python
+from stable_baselines3 import PPO
+from python_src.envs import QuadrotorEnvV2, TaskType
+
+env = QuadrotorEnvV2(task=TaskType.HOVER)
+model = PPO("MlpPolicy", env, verbose=1, tensorboard_log="./logs/")
+model.learn(total_timesteps=1_500_000)
+model.save("ppo_hover")
+```
+
 ### Generating Replays and Visualizations
 
 After training, visualize learned behavior:
@@ -1027,7 +1386,7 @@ python scripts/generate_replay.py \
 ```
 
 **Generated Files:**
-- `unity_replay_ep0.csv`: Timestamped telemetry
+- `unity_replay_ep0.csv`: Timestamped telemetry (Unity-compatible)
 - `animation_ep0.gif`: Animated 3D flight path
 - `trajectory_3d_ep0.png`: Static 3D trajectory
 - `trajectory_2d_ep0.png`: XY/XZ/YZ projections

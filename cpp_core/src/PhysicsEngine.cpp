@@ -210,9 +210,9 @@ double NonlinearMotorModel::computeMotorRPM(
     const MotorConfig& motor,
     const BatteryConfig& battery
 ) noexcept {
-    double normalizedCommand = std::clamp(commandedRPM / 20000.0, 0.0, 1.0);
+    double normalizedCommand = std::clamp(commandedRPM / motor.maxRpm, 0.0, 1.0);
     double nonlinearCommand = computeNonlinearResponse(normalizedCommand, motor.esc.nonlinearGamma);
-    double targetRPM = nonlinearCommand * 20000.0;
+    double targetRPM = nonlinearCommand * motor.maxRpm;
     
     double escDelay = computeESCDelay(voltage, battery.nominalVoltage, motor.esc);
     double thermalFactor = computeThermalDerating(temperature, motor.esc.thermalCoeff);
@@ -238,10 +238,10 @@ double NonlinearMotorModel::computeMotorRPM(
     double filteredTarget = currentRPM + alpha * (targetRPM - currentRPM);
     
     double rpmError = filteredTarget - currentRPM;
-    double maxRPMChange = 20000.0 * dt / escDelay;
+    double maxRPMChange = motor.maxRpm * dt / escDelay;
     double clampedError = std::clamp(rpmError, -maxRPMChange, maxRPMChange);
     
-    return std::clamp(currentRPM + clampedError, 0.0, 20000.0);
+    return std::clamp(currentRPM + clampedError, 0.0, motor.maxRpm);
 }
 
 void NonlinearMotorModel::updateMotorState(
@@ -253,7 +253,7 @@ void NonlinearMotorModel::updateMotorState(
     const BatteryConfig& battery
 ) noexcept {
     for (int i = 0; i < 4; ++i) {
-        double targetRPM = std::clamp(command.rpm[i], 0.0, 20000.0);
+        double targetRPM = std::clamp(command.rpm[i], 0.0, motor.maxRpm);
         
         state.rpm[i] = computeMotorRPM(
             targetRPM, state.rpm[i], voltage, state.temperature[i],

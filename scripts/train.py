@@ -61,6 +61,7 @@ class TrainConfig:
     seed: int = 42
     device: str = 'auto'
     checkpoint_dir: str = 'checkpoints'
+    resume_from: Optional[str] = None
     
     num_envs: int = 1
 
@@ -240,6 +241,41 @@ class Trainer:
         self.timesteps = 0
         self.episodes = 0
         self.start_time = None
+        
+        if self.config.resume_from:
+            self._resume_from_checkpoint(self.config.resume_from)
+    
+    def _resume_from_checkpoint(self, checkpoint_path: str):
+        checkpoint_path = Path(checkpoint_path)
+        if not checkpoint_path.exists():
+            print(f"[RESUME] Checkpoint not found: {checkpoint_path}")
+            return
+        
+        print(f"[RESUME] Loading from {checkpoint_path}")
+        self.agent.load(checkpoint_path)
+        
+        normalizer_path = checkpoint_path / 'obs_normalizer.npz'
+        if normalizer_path.exists() and self.obs_normalizer is not None:
+            data = np.load(normalizer_path)
+            self.obs_normalizer.mean = data['mean']
+            self.obs_normalizer.var = data['var']
+            self.obs_normalizer.count = data['count']
+            print(f"[RESUME] Loaded observation normalizer")
+        
+        state_path = checkpoint_path / 'training_state.npz'
+        if state_path.exists():
+            state = np.load(state_path)
+            self.timesteps = int(state['timesteps'])
+            self.episodes = int(state['episodes'])
+            self.best_eval_reward = float(state['best_eval_reward'])
+            print(f"[RESUME] Restored state: steps={self.timesteps}, episodes={self.episodes}")
+        else:
+            ckpt_name = checkpoint_path.name
+            if ckpt_name.startswith('step_'):
+                self.timesteps = int(ckpt_name.split('_')[1])
+                print(f"[RESUME] Inferred timesteps from checkpoint name: {self.timesteps}")
+        
+        print(f"[RESUME] Ready to continue training from step {self.timesteps}")
     
     def _normalize_obs(self, obs: np.ndarray, update: bool = True) -> np.ndarray:
         if self.obs_normalizer is None:
@@ -257,6 +293,35 @@ class Trainer:
         self.start_time = time.time()
         history = {'rewards': [], 'eval_rewards': [], 'actor_loss': [], 'critic_loss': []}
         
+        if self.config.resume_from is not None:
+            self._resume_from_checkpoint(self.config.resume_from)
+            self.target_timesteps = self.timesteps + self.config.total_timesteps
+            print(f"[RESUME] Will train for {self.config.total_timesteps:,} more steps (target: {self.target_timesteps:,})")
+        else:
+            self.target_timesteps = self.config.total_timesteps
+        
+        if self.obs_normalizer is not None and self.timesteps == 0:
+            print("[WARMUP] Collecting observations to initialize normalizer...")
+            warmup_obs_list = []
+            for _ in range(10):
+                obs_raw, _ = self.env.reset()
+                warmup_obs_list.append(obs_raw.reshape(1, -1) if obs_raw.ndim == 1 else obs_raw)
+                for _ in range(50):
+                    if self.is_vectorized:
+                        action = np.array([self.env.action_space.sample() for _ in range(self.config.num_envs)])
+                    else:
+                        action = self.env.action_space.sample()
+                    obs_raw, _, done, trunc, _ = self.env.step(action)
+                    warmup_obs_list.append(obs_raw.reshape(1, -1) if obs_raw.ndim == 1 else obs_raw)
+                    if (done if not self.is_vectorized else done.any()):
+                        obs_raw, _ = self.env.reset()
+            
+            warmup_obs = np.concatenate(warmup_obs_list, axis=0)
+            self.obs_normalizer.update(warmup_obs)
+            print(f"[WARMUP] Normalizer initialized with {len(warmup_obs)} observations")
+            print(f"[WARMUP] Mean range: [{self.obs_normalizer.mean.min():.3f}, {self.obs_normalizer.mean.max():.3f}]")
+            print(f"[WARMUP] Var range: [{self.obs_normalizer.var.min():.3f}, {self.obs_normalizer.var.max():.3f}]")
+        
         obs, _ = self.env.reset(seed=self.config.seed)
         obs = self._normalize_obs(obs, update=True)
         
@@ -264,7 +329,7 @@ class Trainer:
         episode_length = 0 if not self.is_vectorized else np.zeros(self.config.num_envs, dtype=int)
         episode_crashes = np.zeros(self.config.num_envs, dtype=bool) if self.is_vectorized else False
         
-        while self.timesteps < self.config.total_timesteps:
+        while self.timesteps < self.target_timesteps:
             if self.timesteps < self.config.learning_starts:
                 if self.is_vectorized:
                     action = np.array([self.env.action_space.sample() for _ in range(self.config.num_envs)])
@@ -345,11 +410,13 @@ class Trainer:
                     self.agent.save(self.checkpoint_dir / 'best')
             
             if self.timesteps % self.config.save_freq == 0:
-                self.agent.save(self.checkpoint_dir / f'step_{self.timesteps}')
-                self._save_normalizer()
+                ckpt_path = self.checkpoint_dir / f'step_{self.timesteps}'
+                self.agent.save(ckpt_path)
+                self._save_training_state(ckpt_path)
         
-        self.agent.save(self.checkpoint_dir / 'final')
-        self._save_normalizer()
+        final_path = self.checkpoint_dir / 'final'
+        self.agent.save(final_path)
+        self._save_training_state(final_path)
         return history
     
     def _get_action_with_noise(self, obs: np.ndarray, noise_scale: float) -> np.ndarray:
@@ -389,6 +456,39 @@ class Trainer:
             f"Noise: {self.exploration.noise:.3f} | "
             f"FPS: {fps:.0f}"
         )
+        
+        if self.timesteps % 50000 == 0 and self.timesteps > 0:
+            self._log_detailed_metrics()
+    
+    def _log_detailed_metrics(self):
+        lengths = list(self.stats.lengths)
+        rewards = list(self.stats.rewards)
+        
+        if len(lengths) < 10:
+            return
+        
+        short_eps = sum(1 for l in lengths if l < 50)
+        medium_eps = sum(1 for l in lengths if 50 <= l < 200)
+        long_eps = sum(1 for l in lengths if l >= 200)
+        total = len(lengths)
+        
+        crash_rate = short_eps / total * 100 if total > 0 else 0
+        stable_rate = long_eps / total * 100 if total > 0 else 0
+        
+        avg_length = sum(lengths) / len(lengths)
+        max_length = max(lengths) if lengths else 0
+        min_reward = min(rewards) if rewards else 0
+        max_reward = max(rewards) if rewards else 0
+        
+        print("\n" + "=" * 70)
+        print(f"[DETAILED METRICS @ Step {self.timesteps}]")
+        print("-" * 70)
+        print(f"  Episodes:   Short(<50): {short_eps:>3} ({crash_rate:.0f}%)  |  "
+              f"Medium(50-200): {medium_eps:>3}  |  Long(>200): {long_eps:>3} ({stable_rate:.0f}%)")
+        print(f"  Length:     Avg: {avg_length:.1f}  |  Max: {max_length}")
+        print(f"  Reward:     Min: {min_reward:.1f}  |  Max: {max_reward:.1f}  |  Avg: {self.stats.mean_reward:.1f}")
+        print(f"  Exploration: Noise={self.exploration.noise:.3f}")
+        print("=" * 70 + "\n")
     
     def _save_normalizer(self):
         if self.obs_normalizer is not None:
@@ -399,6 +499,22 @@ class Trainer:
                 count=self.obs_normalizer.count
             )
     
+    def _save_training_state(self, ckpt_path: Path):
+        self._save_normalizer()
+        if self.obs_normalizer is not None:
+            np.savez(
+                ckpt_path / 'obs_normalizer.npz',
+                mean=self.obs_normalizer.mean,
+                var=self.obs_normalizer.var,
+                count=self.obs_normalizer.count
+            )
+        np.savez(
+            ckpt_path / 'training_state.npz',
+            timesteps=self.timesteps,
+            episodes=self.episodes,
+            best_eval_reward=self.best_eval_reward
+        )
+    
     def load_normalizer(self, path: Path):
         if self.obs_normalizer is not None:
             data = np.load(path)
@@ -408,81 +524,103 @@ class Trainer:
 
 
 def main():
+    import yaml
+    
+    config_path = os.path.join(ROOT_DIR, 'config', 'train_params.yaml')
+    with open(config_path, 'r') as f:
+        cfg = yaml.safe_load(f)
+    
     train_config = TrainConfig(
-        agent_type='td3',
-        total_timesteps=1_000_000,
-        batch_size=256,
-        buffer_size=1_000_000,
-        learning_starts=10_000,
-        train_freq=4,
-        gradient_steps=4,
+        agent_type=cfg['agent']['type'],
+        total_timesteps=cfg['training']['total_timesteps'],
+        batch_size=cfg['training']['batch_size'],
+        buffer_size=cfg['replay_buffer']['size'],
+        learning_starts=cfg['training']['learning_starts'],
+        train_freq=cfg['training']['train_freq'],
+        gradient_steps=cfg['training']['gradient_steps'],
         
-        lr_actor=3e-4,
-        lr_critic=3e-4,
-        hidden_dim=512,
+        lr_actor=float(cfg['agent']['lr_actor']),
+        lr_critic=float(cfg['agent']['lr_critic']),
+        hidden_dim=cfg['agent']['hidden_dim'],
+        gamma=cfg['agent']['gamma'],
+        tau=cfg['agent']['tau'],
         
-        policy_noise=0.15,
-        noise_clip=0.4,
-        policy_delay=2,
+        policy_noise=cfg['td3_specific']['policy_noise'],
+        noise_clip=cfg['td3_specific']['noise_clip'],
+        policy_delay=cfg['td3_specific']['policy_delay'],
         
-        exploration_noise_start=0.15,
-        exploration_noise_end=0.05,
-        exploration_warmup_steps=50000,
-        exploration_noise_decay=0.99995,
-        exploration_noise_min=0.02,
+        exploration_noise_start=cfg['exploration']['noise'],
+        exploration_noise_end=cfg['exploration']['noise_min'],
+        exploration_warmup_steps=int(cfg['training']['total_timesteps'] * 0.1), # Auto-calc warmup
+        exploration_noise_decay=cfg['exploration']['noise_decay'],
+        exploration_noise_min=cfg['exploration']['noise_min'],
         
-        use_per=True,
-        per_alpha=0.7,
-        per_beta_start=0.5,
+        use_per=cfg['replay_buffer']['use_per'],
+        per_alpha=cfg['replay_buffer']['per_alpha'],
+        per_beta_start=cfg['replay_buffer']['per_beta_start'],
         
-        use_obs_normalization=True,
-        obs_norm_clip=10.0,
-        obs_norm_update_freq=100,
+        eval_freq=cfg['evaluation']['freq'],
+        eval_episodes=cfg['evaluation']['episodes'],
+        save_freq=cfg['checkpointing']['save_freq'],
+        log_freq=cfg['checkpointing']['log_freq'],
+        checkpoint_dir=cfg['checkpointing']['dir'],
+        resume_from=cfg['checkpointing'].get('resume_from', None),
         
-        eval_freq=20000,
-        save_freq=100000,
-        log_freq=2000,
-        
-        seed=42,
-        num_envs=4
+        seed=cfg['seed'],
+        device=cfg['device'],
+        num_envs=cfg['environment']['num_envs']
     )
     
+    env_cfg = cfg['environment']
+    rew_cfg = cfg['rewards']
+    term_cfg = cfg['termination']
+    curr_cfg = cfg.get('curriculum', {})
+    
     env_config = EnvConfig(
-        dt=0.01,
-        physics_sub_steps=4,
-        use_sub_stepping=True,
-        max_steps=1000,
-        domain_randomization=False,
-        wind_enabled=False,
-        motor_dynamics=True,
+        dt=env_cfg['dt'],
+        max_steps=env_cfg['max_steps'],
+        domain_randomization=env_cfg['domain_randomization'],
+        wind_enabled=env_cfg['wind_enabled'],
+        motor_dynamics=env_cfg['motor_dynamics'],
+        physics_sub_steps=env_cfg.get('physics_sub_steps', 8),
+        use_sub_stepping=env_cfg.get('use_sub_stepping', True),
         
-        reward_position=-0.25,
-        reward_velocity=-0.01,
-        reward_angular=-0.005,
-        reward_action=-0.0005,
-        reward_action_rate=-0.001,
-        reward_alive=1.0,
-        reward_crash=-5.0,
-        reward_success=100.0,
-        reward_height_bonus=0.25,
-        reward_stability_bonus=0.5,
-        reward_hover_bonus=1.5,
+        mass=float(env_cfg.get('mass', 0.6)),
+        max_rpm=float(env_cfg.get('max_rpm', 35000.0)),
+        min_rpm=float(env_cfg.get('min_rpm', 3000.0)),
+        hover_rpm=float(env_cfg.get('hover_rpm', 5500.0)),
+        rpm_range=float(env_cfg.get('rpm_range', 15000.0)),
+        action_smoothing=float(env_cfg.get('action_smoothing', 0.5)),
+        saturation_threshold=float(env_cfg.get('saturation_threshold', 0.9)),
         
-        reward_saturation_penalty=-0.01,
-        saturation_threshold=0.95,
+        reward_position=float(rew_cfg['position']),
+        reward_velocity=float(rew_cfg['velocity']),
+        reward_angular=float(rew_cfg['angular']),
+        reward_action=float(rew_cfg['action']),
+        reward_action_rate=float(rew_cfg['action_rate']),
+        reward_action_accel=float(rew_cfg.get('action_accel', -0.1)),
+        reward_action_jerk=float(rew_cfg.get('action_jerk', -0.1)),
+        reward_alive=float(rew_cfg.get('alive', 0.0)),
+        reward_crash=float(rew_cfg['crash']),
+        reward_success=float(rew_cfg['success']),
+        reward_height_bonus=float(rew_cfg.get('height_bonus', 0.5)),
+        reward_stability_bonus=float(rew_cfg.get('stability_bonus', 0.5)),
+        reward_hover_bonus=float(rew_cfg.get('hover_bonus', 1.5)),
+        reward_saturation_penalty=float(rew_cfg.get('saturation_penalty', -0.1)),
         
-        crash_height=0.05,
-        crash_distance=10.0,
-        crash_angle=1.2,
-        success_distance=0.5,
-        success_velocity=0.5,
-        success_hold_steps=1000,
+        crash_height=float(term_cfg['crash_height']),
+        crash_distance=float(term_cfg['crash_distance']),
+        crash_angle=float(term_cfg['crash_angle']),
+        success_distance=float(term_cfg['success_distance']),
+        success_velocity=float(term_cfg['success_velocity']),
+        success_hold_steps=int(term_cfg['success_hold_steps']),
         
-        curriculum_enabled=True,
-        curriculum_init_range=0.05,
-        curriculum_max_range=0.5,
-        curriculum_progress_rate=0.00002
+        curriculum_enabled=curr_cfg.get('enabled', True),
+        curriculum_init_range=float(curr_cfg.get('init_range', 0.1)),
+        curriculum_max_range=float(curr_cfg.get('max_range', 0.5)),
+        curriculum_progress_rate=float(curr_cfg.get('progress_rate', 0.00005))
     )
+
     
     trainer = Trainer(train_config, env_config)
     
