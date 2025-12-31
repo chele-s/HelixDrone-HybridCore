@@ -10,6 +10,7 @@
 #include "StateEstimator.h"
 #include "ActuatorFailure.h"
 #include "CollisionWorld.h"
+#include "PayloadDynamics.h"
 
 namespace py = pybind11;
 
@@ -540,7 +541,10 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("baro_update_rate", &SensorNoise::baro_update_rate)
         .def_readwrite("mag_update_rate", &SensorNoise::mag_update_rate)
         .def_readwrite("accel_bias_stability", &SensorNoise::accel_bias_stability)
-        .def_readwrite("gyro_bias_stability", &SensorNoise::gyro_bias_stability);
+        .def_readwrite("gyro_bias_stability", &SensorNoise::gyro_bias_stability)
+        .def_readwrite("cable_angle_std", &SensorNoise::cable_angle_std)
+        .def_readwrite("cable_angle_update_rate", &SensorNoise::cable_angle_update_rate)
+        .def_readwrite("cable_sensor_enabled", &SensorNoise::cable_sensor_enabled);
     
     py::class_<EKFState>(m, "EKFState")
         .def(py::init<>())
@@ -561,7 +565,40 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("timestamp", &SensorReading::timestamp)
         .def_readwrite("gps_valid", &SensorReading::gps_valid)
         .def_readwrite("baro_valid", &SensorReading::baro_valid)
-        .def_readwrite("mag_valid", &SensorReading::mag_valid);
+        .def_readwrite("mag_valid", &SensorReading::mag_valid)
+        .def_readwrite("cable", &SensorReading::cable);
+    
+    py::class_<CableSensorReading>(m, "CableSensorReading")
+        .def(py::init<>())
+        .def_readwrite("theta_x", &CableSensorReading::theta_x)
+        .def_readwrite("theta_y", &CableSensorReading::theta_y)
+        .def_readwrite("tension", &CableSensorReading::tension)
+        .def_readwrite("timestamp", &CableSensorReading::timestamp)
+        .def_readwrite("valid", &CableSensorReading::valid);
+    
+    py::class_<RobustnessConfig>(m, "RobustnessConfig")
+        .def(py::init<>())
+        .def_readwrite("enable_chi_square_gating", &RobustnessConfig::enable_chi_square_gating)
+        .def_readwrite("enable_fault_detection", &RobustnessConfig::enable_fault_detection)
+        .def_readwrite("enable_adaptive_noise", &RobustnessConfig::enable_adaptive_noise)
+        .def_readwrite("enable_state_dependent_noise", &RobustnessConfig::enable_state_dependent_noise)
+        .def_readwrite("chi_square_threshold_1dof", &RobustnessConfig::chi_square_threshold_1dof)
+        .def_readwrite("chi_square_threshold_3dof", &RobustnessConfig::chi_square_threshold_3dof)
+        .def_readwrite("max_consecutive_rejections", &RobustnessConfig::max_consecutive_rejections)
+        .def_readwrite("adaptive_alpha", &RobustnessConfig::adaptive_alpha)
+        .def_readwrite("gyro_noise_scale_coeff", &RobustnessConfig::gyro_noise_scale_coeff)
+        .def_readwrite("accel_noise_scale_coeff", &RobustnessConfig::accel_noise_scale_coeff)
+        .def_readwrite("enable_external_force_estimation", &RobustnessConfig::enable_external_force_estimation)
+        .def_readwrite("external_force_process_noise", &RobustnessConfig::external_force_process_noise);
+    
+    py::class_<ConsistencyMetrics>(m, "ConsistencyMetrics")
+        .def(py::init<>())
+        .def_readonly("current_nis", &ConsistencyMetrics::current_nis)
+        .def_readonly("avg_nis", &ConsistencyMetrics::avg_nis)
+        .def_readonly("nees", &ConsistencyMetrics::nees)
+        .def_readonly("total_updates", &ConsistencyMetrics::total_updates)
+        .def_readonly("rejected_updates", &ConsistencyMetrics::rejected_updates)
+        .def_readonly("rejection_rate", &ConsistencyMetrics::rejection_rate);
     
     py::class_<ExtendedKalmanFilter>(m, "ExtendedKalmanFilter")
         .def(py::init<>())
@@ -569,7 +606,8 @@ PYBIND11_MODULE(drone_core, m) {
         .def("reset", py::overload_cast<>(&ExtendedKalmanFilter::reset))
         .def("reset", py::overload_cast<const Vec3&, const Vec3&, const Quaternion&>(&ExtendedKalmanFilter::reset))
         .def("predict", &ExtendedKalmanFilter::predict)
-        .def("update_gps", &ExtendedKalmanFilter::updateGPS)
+        .def("update_gps_position", &ExtendedKalmanFilter::updateGPSPosition)
+        .def("update_gps_velocity", &ExtendedKalmanFilter::updateGPSVelocity)
         .def("update_barometer", &ExtendedKalmanFilter::updateBarometer)
         .def("update_magnetometer", &ExtendedKalmanFilter::updateMagnetometer)
         .def("get_state", &ExtendedKalmanFilter::getState)
@@ -581,14 +619,28 @@ PYBIND11_MODULE(drone_core, m) {
         .def("get_position_uncertainty", &ExtendedKalmanFilter::getPositionUncertainty)
         .def("get_orientation_uncertainty", &ExtendedKalmanFilter::getOrientationUncertainty)
         .def("set_process_noise", &ExtendedKalmanFilter::setProcessNoise)
-        .def("set_measurement_noise", &ExtendedKalmanFilter::setMeasurementNoise);
+        .def("set_measurement_noise", &ExtendedKalmanFilter::setMeasurementNoise)
+        .def("set_robustness_config", &ExtendedKalmanFilter::setRobustnessConfig)
+        .def("is_sensor_healthy", &ExtendedKalmanFilter::isSensorHealthy)
+        .def("get_current_nis", &ExtendedKalmanFilter::getCurrentNIS)
+        .def("get_consistency_metrics", &ExtendedKalmanFilter::getConsistencyMetrics)
+        .def("is_yaw_observable", &ExtendedKalmanFilter::isYawObservable)
+        .def("is_accel_valid", &ExtendedKalmanFilter::isAccelValid)
+        .def("compute_nees", &ExtendedKalmanFilter::computeNEES);
     
     py::class_<SensorSimulator>(m, "SensorSimulator")
         .def(py::init<>())
         .def(py::init<const SensorNoise&>())
         .def("set_noise", &SensorSimulator::setNoise)
         .def("simulate", &SensorSimulator::simulate)
-        .def("reset", &SensorSimulator::reset);
+        .def("simulate_cable_angle", &SensorSimulator::simulateCableAngle)
+        .def("reset", &SensorSimulator::reset)
+        .def("inject_gps_failure", &SensorSimulator::injectGPSFailure)
+        .def("inject_baro_failure", &SensorSimulator::injectBaroFailure)
+        .def("inject_mag_failure", &SensorSimulator::injectMagFailure)
+        .def("inject_cable_failure", &SensorSimulator::injectCableFailure)
+        .def("inject_gps_spoof", &SensorSimulator::injectGPSSpoof)
+        .def("clear_all_failures", &SensorSimulator::clearAllFailures);
     
     py::class_<StateEstimator>(m, "StateEstimator")
         .def(py::init<>())
@@ -749,4 +801,142 @@ PYBIND11_MODULE(drone_core, m) {
         .def("get_collider_count", &CollisionWorld::getColliderCount)
         .def("clear_colliders", &CollisionWorld::clearColliders)
         .def("reset", &CollisionWorld::reset);
+    
+    py::enum_<CableState>(m, "CableState")
+        .value("SLACK", CableState::SLACK)
+        .value("TENSIONED", CableState::TENSIONED)
+        .value("STRETCHED", CableState::STRETCHED);
+    
+    py::class_<CableConfig>(m, "CableConfig")
+        .def(py::init<>())
+        .def_readwrite("rest_length", &CableConfig::rest_length)
+        .def_readwrite("compliance", &CableConfig::compliance)
+        .def_readwrite("damping", &CableConfig::damping)
+        .def_readwrite("linear_density", &CableConfig::linear_density)
+        .def_readwrite("num_segments", &CableConfig::num_segments)
+        .def_readwrite("drag_coefficient", &CableConfig::drag_coefficient)
+        .def_readwrite("diameter", &CableConfig::diameter)
+        .def_readwrite("enable_drag", &CableConfig::enable_drag)
+        .def_readwrite("enable_catenary", &CableConfig::enable_catenary)
+        .def_readwrite("max_strain", &CableConfig::max_strain);
+    
+    py::class_<PayloadConfig>(m, "PayloadConfig")
+        .def(py::init<>())
+        .def_readwrite("mass", &PayloadConfig::mass)
+        .def_readwrite("inertia", &PayloadConfig::inertia)
+        .def_readwrite("drag_area", &PayloadConfig::drag_area)
+        .def_readwrite("drag_coefficient", &PayloadConfig::drag_coefficient)
+        .def_readwrite("center_of_mass", &PayloadConfig::center_of_mass)
+        .def_readwrite("restitution", &PayloadConfig::restitution)
+        .def_readwrite("friction", &PayloadConfig::friction);
+    
+    py::class_<PayloadState>(m, "PayloadState")
+        .def(py::init<>())
+        .def(py::init<const Vec3&, const Vec3&>())
+        .def_readwrite("position", &PayloadState::position)
+        .def_readwrite("velocity", &PayloadState::velocity)
+        .def_readwrite("orientation", &PayloadState::orientation)
+        .def_readwrite("angular_velocity", &PayloadState::angular_velocity);
+    
+    py::class_<CableForces>(m, "CableForces")
+        .def(py::init<>())
+        .def_readonly("tension_force", &CableForces::tension_force)
+        .def_readonly("damping_force", &CableForces::damping_force)
+        .def_readonly("drag_force", &CableForces::drag_force)
+        .def_readonly("tension_magnitude", &CableForces::tension_magnitude)
+        .def_readonly("strain", &CableForces::strain)
+        .def_readonly("state", &CableForces::state)
+        .def("total", &CableForces::total);
+    
+    py::class_<PayloadForces>(m, "PayloadForces")
+        .def(py::init<>())
+        .def_readonly("gravity", &PayloadForces::gravity)
+        .def_readonly("cable_tension", &PayloadForces::cable_tension)
+        .def_readonly("aerodynamic_drag", &PayloadForces::aerodynamic_drag)
+        .def_readonly("ground_reaction", &PayloadForces::ground_reaction)
+        .def_readonly("total_force", &PayloadForces::total_force)
+        .def_readonly("total_torque", &PayloadForces::total_torque);
+    
+    py::class_<DronePayloadCoupling>(m, "DronePayloadCoupling")
+        .def(py::init<>())
+        .def_readonly("force_on_drone", &DronePayloadCoupling::force_on_drone)
+        .def_readonly("torque_on_drone", &DronePayloadCoupling::torque_on_drone)
+        .def_readonly("total_tension", &DronePayloadCoupling::total_tension)
+        .def_readonly("payload_attached", &DronePayloadCoupling::payload_attached)
+        .def_readonly("total_energy", &DronePayloadCoupling::total_energy);
+    
+    py::enum_<IntegratorType>(m, "IntegratorType")
+        .value("VERLET", IntegratorType::VERLET)
+        .value("RK4", IntegratorType::RK4)
+        .value("XPBD", IntegratorType::XPBD);
+    
+    py::class_<UnifiedXPBDSystem>(m, "XPBDCable")
+        .def(py::init<>())
+        .def(py::init<const CableConfig&, const PayloadConfig&>())
+        .def("initialize", &UnifiedXPBDSystem::initialize)
+        .def("prestabilize", &UnifiedXPBDSystem::prestabilize)
+        .def("step", &UnifiedXPBDSystem::step, py::arg("anchor_pos"), py::arg("anchor_vel"), 
+             py::arg("dt"), py::arg("wind") = Vec3(), py::arg("ground_height") = 0.0)
+        .def("get_anchor_force", &UnifiedXPBDSystem::getAnchorForce)
+        .def("get_state", &UnifiedXPBDSystem::getState)
+        .def("get_tension", &UnifiedXPBDSystem::getTension)
+        .def("get_strain", &UnifiedXPBDSystem::getStrain)
+        .def("get_total_length", &UnifiedXPBDSystem::getTotalLength)
+        .def("get_particle_count", &UnifiedXPBDSystem::getParticleCount)
+        .def("get_payload_particle_index", &UnifiedXPBDSystem::getPayloadParticleIndex)
+        .def("get_payload_position", &UnifiedXPBDSystem::getPayloadPosition)
+        .def("get_payload_velocity", &UnifiedXPBDSystem::getPayloadVelocity)
+        .def("get_kinetic_energy", &UnifiedXPBDSystem::getKineticEnergy)
+        .def("get_potential_energy", &UnifiedXPBDSystem::getPotentialEnergy, py::arg("ground_height") = 0.0)
+        .def("get_total_energy", &UnifiedXPBDSystem::getTotalEnergy, py::arg("ground_height") = 0.0)
+        .def("reset", &UnifiedXPBDSystem::reset);
+    
+    py::class_<PayloadDynamics>(m, "PayloadDynamics")
+        .def(py::init<>())
+        .def(py::init<const PayloadConfig&, const CableConfig&>())
+        .def("step", &PayloadDynamics::step, py::arg("drone_position"), py::arg("drone_orientation"),
+             py::arg("drone_velocity"), py::arg("drone_angular_velocity"), py::arg("dt"), 
+             py::arg("air_density") = 1.225)
+        .def("get_coupling_forces", &PayloadDynamics::getCouplingForces)
+        .def("attach", &PayloadDynamics::attach, py::arg("initial_offset") = Vec3(0, 0, -1.0))
+        .def("detach", &PayloadDynamics::detach)
+        .def("is_attached", &PayloadDynamics::isAttached)
+        .def("add_attachment_point", &PayloadDynamics::addAttachmentPoint)
+        .def("clear_attachment_points", &PayloadDynamics::clearAttachmentPoints)
+        .def("get_attachment_count", &PayloadDynamics::getAttachmentCount)
+        .def("get_payload_state", &PayloadDynamics::getPayloadState)
+        .def("get_payload_forces", &PayloadDynamics::getPayloadForces)
+        .def("set_payload_config", &PayloadDynamics::setPayloadConfig)
+        .def("set_cable_config", &PayloadDynamics::setCableConfig)
+        .def("get_payload_config", &PayloadDynamics::getPayloadConfig)
+        .def("get_cable_config", &PayloadDynamics::getCableConfig)
+        .def("set_ground_height", &PayloadDynamics::setGroundHeight)
+        .def("set_wind_velocity", &PayloadDynamics::setWindVelocity)
+        .def("set_integrator", &PayloadDynamics::setIntegrator)
+        .def("reset", py::overload_cast<>(&PayloadDynamics::reset))
+        .def("reset", py::overload_cast<const PayloadState&>(&PayloadDynamics::reset))
+        .def("get_kinetic_energy", &PayloadDynamics::getKineticEnergy)
+        .def("get_potential_energy", &PayloadDynamics::getPotentialEnergy)
+        .def("get_cable_energy", &PayloadDynamics::getCableEnergy)
+        .def("get_total_energy", &PayloadDynamics::getTotalEnergy)
+        .def("get_swing_angle", &PayloadDynamics::getSwingAngle)
+        .def("get_cable_angle_from_vertical", &PayloadDynamics::getCableAngleFromVertical)
+        .def("get_natural_frequency", &PayloadDynamics::getNaturalFrequency);
+    
+    py::class_<SwingingPayloadController::LQRGains>(m, "LQRGains")
+        .def(py::init<>())
+        .def_readwrite("max_compensation", &SwingingPayloadController::LQRGains::max_compensation)
+        .def_readwrite("damping_ratio", &SwingingPayloadController::LQRGains::damping_ratio);
+    
+    py::class_<SwingingPayloadController>(m, "SwingingPayloadController")
+        .def(py::init<>())
+        .def(py::init<const SwingingPayloadController::LQRGains&>())
+        .def("compute_compensation", &SwingingPayloadController::computeCompensation)
+        .def("compute_input_shaping", &SwingingPayloadController::computeInputShaping)
+        .def("compute_energy_based_control", &SwingingPayloadController::computeEnergyBasedControl)
+        .def("compute_compensation_from_angles", &SwingingPayloadController::computeCompensationFromAngles)
+        .def_static("estimate_payload_from_cable_angles", &SwingingPayloadController::estimatePayloadFromCableAngles)
+        .def("set_gains", &SwingingPayloadController::setGains)
+        .def("get_gains", &SwingingPayloadController::getGains)
+        .def("reset", &SwingingPayloadController::reset);
 }

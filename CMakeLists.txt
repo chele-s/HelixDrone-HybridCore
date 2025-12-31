@@ -35,6 +35,7 @@ set(PHYSICS_SOURCES
     cpp_core/src/StateEstimator.cpp
     cpp_core/src/ActuatorFailure.cpp
     cpp_core/src/CollisionWorld.cpp
+    cpp_core/src/PayloadDynamics.cpp
 )
 
 pybind11_add_module(drone_core 

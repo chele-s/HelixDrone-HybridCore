@@ -1,3 +1,4 @@
+"""Extended drone environment with ESKF, Payload, and Collision integration."""
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'Release'))
@@ -10,16 +11,24 @@ from enum import IntEnum
 
 import drone_core
 
+from .observation_builder import (
+    ObservationBuilder, ObsConfig, ObservationMode, EnvState, 
+    create_observation_builder
+)
+from .reward_functions import RewardBuilder, RewardConfig, RewardState
+
 
 class TaskType(IntEnum):
     HOVER = 0
     WAYPOINT = 1
     TRAJECTORY = 2
     VELOCITY = 3
+    PAYLOAD_HOVER = 4
+    PAYLOAD_TRANSPORT = 5
 
 
 @dataclass
-class EnvConfig:
+class ExtendedEnvConfig:
     dt: float = 0.01
     physics_sub_steps: int = 4
     max_steps: int = 2000
@@ -33,40 +42,17 @@ class EnvConfig:
     velocity_scale: float = 5.0
     angular_velocity_scale: float = 10.0
     
-    reward_position: float = -0.5
-    reward_velocity: float = -0.02
-    reward_angular: float = -0.01
-    reward_alive: float = 0.3
-    reward_crash: float = -50.0
-    reward_success: float = 100.0
-    reward_velocity_toward: float = 3.0
-    reward_orientation: float = 2.0
-    reward_smoothness: float = -0.3
-    reward_action_rate: float = -0.15
-    reward_action_accel: float = -0.08
+    observation_mode: str = 'estimated'
+    use_eskf: bool = True
     
-    reward_height_bonus: float = 0.3
-    reward_stability_bonus: float = 0.2
-    reward_hover_bonus: float = 3.0
-    reward_progress: float = 4.0
+    payload_enabled: bool = False
+    payload_mass: float = 0.5
+    cable_length: float = 1.0
+    cable_sensor_enabled: bool = True
+    cable_angle_noise: float = 0.05
     
-    crash_height: float = 0.05
-    crash_distance: float = 15.0
-    crash_angle: float = 1.2
-    crash_velocity: float = 8.0
-    success_distance: float = 0.25
-    success_velocity: float = 0.4
-    success_hold_steps: int = 50
-    
-    curriculum_enabled: bool = True
-    curriculum_init_range: float = 0.02
-    curriculum_max_range: float = 0.6
-    curriculum_progress_rate: float = 0.00005
-    
-    target_curriculum_enabled: bool = True
-    target_speed_init: float = 0.0
-    target_speed_max: float = 2.5
-    target_speed_curriculum_rate: float = 0.00003
+    collision_enabled: bool = False
+    num_obstacles: int = 0
     
     domain_randomization: bool = True
     mass_randomization: Tuple[float, float] = (0.85, 1.15)
@@ -77,6 +63,16 @@ class EnvConfig:
     
     observation_noise: float = 0.01
     action_delay_steps: int = 0
+    
+    curriculum_enabled: bool = True
+    curriculum_init_range: float = 0.02
+    curriculum_max_range: float = 0.6
+    curriculum_progress_rate: float = 0.00005
+    
+    target_curriculum_enabled: bool = True
+    target_speed_init: float = 0.0
+    target_speed_max: float = 2.5
+    target_speed_curriculum_rate: float = 0.00003
 
 
 class ActionHistory:
@@ -156,19 +152,6 @@ class TargetGenerator:
             self._position = np.array([x, y, z])
             self._velocity = np.array([vx, vy, vz])
         
-        elif self._mode == 'random_walk':
-            if self._t < dt * 1.5:
-                self._velocity = np.random.uniform(-1, 1, 3) * self._speed
-                self._velocity[2] *= 0.3
-            
-            if np.random.random() < 0.01:
-                self._velocity = np.random.uniform(-1, 1, 3) * self._speed
-                self._velocity[2] *= 0.3
-            
-            self._position += self._velocity * dt
-            self._position[2] = np.clip(self._position[2], 0.5, 5.0)
-            self._position[:2] = np.clip(self._position[:2], -5.0, 5.0)
-        
         return self._position.copy(), self._velocity.copy()
     
     def reset(self, center: np.ndarray = None):
@@ -180,35 +163,42 @@ class TargetGenerator:
         self._velocity = np.zeros(3)
 
 
-class QuadrotorEnv(gym.Env):
+class QuadrotorEnvV2(gym.Env):
+    """SOTA Quadrotor environment with ESKF, Payload, and modular components."""
+    
     metadata = {'render_modes': ['human'], 'render_fps': 50}
     
     def __init__(
         self,
-        config: Optional[EnvConfig] = None,
+        config: Optional[ExtendedEnvConfig] = None,
         task: TaskType = TaskType.HOVER,
         target: Optional[np.ndarray] = None,
         render_mode: Optional[str] = None
     ):
         super().__init__()
         
-        self.config = config or EnvConfig()
+        self.config = config or ExtendedEnvConfig()
         self.task = task
         self.render_mode = render_mode
         
+        if task in (TaskType.PAYLOAD_HOVER, TaskType.PAYLOAD_TRANSPORT):
+            self.config.payload_enabled = True
+        
         self._setup_drone()
         self._setup_sota_actuator()
+        self._setup_estimation()
+        self._setup_payload()
+        self._setup_observation_builder()
+        self._setup_reward_builder()
         
         self.action_space = gym.spaces.Box(
             low=-1.0, high=1.0, shape=(4,), dtype=np.float32
         )
         
-        self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(26,), dtype=np.float32
-        )
+        self.observation_space = self._obs_builder.observation_space
         
         self._target_generator = TargetGenerator(
-            mode='static' if task == TaskType.HOVER else 'figure8',
+            mode='static' if task in (TaskType.HOVER, TaskType.PAYLOAD_HOVER) else 'figure8',
             center=target if target is not None else np.array([0.0, 0.0, 2.0])
         )
         self.target = self._target_generator._center.copy()
@@ -223,9 +213,9 @@ class QuadrotorEnv(gym.Env):
         self._total_episodes = 0
         self._curriculum_progress = 0.0
         self._target_speed_progress = 0.0
-        self._hover_duration = 0
-        self._prev_dist = 0.0
-        self._prev_vel_toward = 0.0
+        
+        self._prev_cable_theta = np.zeros(2)
+        self._cable_angle_rate = np.zeros(2)
     
     def _setup_drone(self):
         self._cfg = drone_core.QuadrotorConfig()
@@ -279,6 +269,57 @@ class QuadrotorEnv(gym.Env):
         actuator_cfg.nominal_voltage = 16.8
         self._sota_actuator = drone_core.SOTAActuatorModel(actuator_cfg)
     
+    def _setup_estimation(self):
+        if self.config.use_eskf:
+            sensor_noise = drone_core.SensorNoise()
+            sensor_noise.cable_sensor_enabled = self.config.cable_sensor_enabled
+            sensor_noise.cable_angle_std = self.config.cable_angle_noise
+            
+            self._sensor_sim = drone_core.SensorSimulator(sensor_noise)
+            self._estimator = drone_core.StateEstimator(sensor_noise)
+        else:
+            self._sensor_sim = None
+            self._estimator = None
+    
+    def _setup_payload(self):
+        if self.config.payload_enabled:
+            payload_cfg = drone_core.PayloadConfig()
+            payload_cfg.mass = self.config.payload_mass
+            
+            cable_cfg = drone_core.CableConfig()
+            cable_cfg.rest_length = self.config.cable_length
+            
+            self._payload = drone_core.PayloadDynamics(payload_cfg, cable_cfg)
+            self._swing_controller = drone_core.SwingingPayloadController()
+        else:
+            self._payload = None
+            self._swing_controller = None
+    
+    def _setup_observation_builder(self):
+        mode_map = {
+            'true_state': ObservationMode.TRUE_STATE,
+            'estimated': ObservationMode.ESTIMATED,
+            'sensor_only': ObservationMode.SENSOR_ONLY,
+        }
+        
+        obs_config = ObsConfig(
+            mode=mode_map.get(self.config.observation_mode, ObservationMode.ESTIMATED),
+            position_scale=self.config.position_scale,
+            velocity_scale=self.config.velocity_scale,
+            angular_velocity_scale=self.config.angular_velocity_scale,
+            include_cable_angles=self.config.payload_enabled and self.config.cable_sensor_enabled,
+            include_payload_state=self.config.payload_enabled,
+            observation_noise=self.config.observation_noise,
+        )
+        
+        self._obs_builder = ObservationBuilder(obs_config)
+    
+    def _setup_reward_builder(self):
+        self._reward_builder = RewardBuilder(
+            config=RewardConfig(),
+            include_payload=self.config.payload_enabled
+        )
+    
     def _apply_domain_randomization(self):
         if not self.config.domain_randomization:
             return
@@ -318,13 +359,6 @@ class QuadrotorEnv(gym.Env):
         else:
             curr_range = self.config.curriculum_max_range
         
-        if self.config.target_curriculum_enabled:
-            self._target_speed_progress = min(1.0, self._target_speed_progress + self.config.target_speed_curriculum_rate)
-            target_speed = self.config.target_speed_init + (
-                self.config.target_speed_max - self.config.target_speed_init
-            ) * self._target_speed_progress
-            self._target_generator.set_speed(target_speed)
-        
         target_center = np.array([
             self._rng.uniform(-2 * curr_range, 2 * curr_range),
             self._rng.uniform(-2 * curr_range, 2 * curr_range),
@@ -333,32 +367,33 @@ class QuadrotorEnv(gym.Env):
         self._target_generator.reset(target_center)
         self.target, self._target_velocity = self._target_generator.update(0.0)
         
-        if self.task == TaskType.HOVER:
-            init_x = self._rng.uniform(-0.15 * curr_range, 0.15 * curr_range)
-            init_y = self._rng.uniform(-0.15 * curr_range, 0.15 * curr_range)
-            init_z = self.target[2] + self._rng.uniform(-0.3 * curr_range, 0.3 * curr_range)
-            init_z = np.clip(init_z, 0.5, 5.0)
-            self._drone.set_position(drone_core.Vec3(init_x, init_y, init_z))
-            
-            init_vx = self._rng.uniform(-0.2 * curr_range, 0.2 * curr_range)
-            init_vy = self._rng.uniform(-0.2 * curr_range, 0.2 * curr_range)
-            init_vz = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
-            self._drone.set_velocity(drone_core.Vec3(init_vx, init_vy, init_vz))
-            
-            roll = self._rng.uniform(-0.03 * curr_range, 0.03 * curr_range)
-            pitch = self._rng.uniform(-0.03 * curr_range, 0.03 * curr_range)
-            yaw = self._rng.uniform(-0.15 * curr_range, 0.15 * curr_range)
-            self._drone.set_orientation(
-                drone_core.Quaternion.from_euler_zyx(roll, pitch, yaw)
-            )
+        init_x = self._rng.uniform(-0.15 * curr_range, 0.15 * curr_range)
+        init_y = self._rng.uniform(-0.15 * curr_range, 0.15 * curr_range)
+        init_z = self.target[2] + self._rng.uniform(-0.3 * curr_range, 0.3 * curr_range)
+        init_z = np.clip(init_z, 0.5, 5.0)
+        self._drone.set_position(drone_core.Vec3(init_x, init_y, init_z))
         
-        elif self.task == TaskType.WAYPOINT:
-            self._drone.set_position(drone_core.Vec3(0, 0, 1.0))
-            self.target = np.array([
-                self._rng.uniform(-4, 4),
-                self._rng.uniform(-4, 4),
-                self._rng.uniform(1, 4)
-            ])
+        init_vx = self._rng.uniform(-0.2 * curr_range, 0.2 * curr_range)
+        init_vy = self._rng.uniform(-0.2 * curr_range, 0.2 * curr_range)
+        init_vz = self._rng.uniform(-0.1 * curr_range, 0.1 * curr_range)
+        self._drone.set_velocity(drone_core.Vec3(init_vx, init_vy, init_vz))
+        
+        roll = self._rng.uniform(-0.03 * curr_range, 0.03 * curr_range)
+        pitch = self._rng.uniform(-0.03 * curr_range, 0.03 * curr_range)
+        yaw = self._rng.uniform(-0.15 * curr_range, 0.15 * curr_range)
+        self._drone.set_orientation(
+            drone_core.Quaternion.from_euler_zyx(roll, pitch, yaw)
+        )
+        
+        if self._estimator is not None:
+            self._estimator.reset(self._drone.get_state())
+            self._sensor_sim.reset()
+        
+        if self._payload is not None:
+            self._payload.reset()
+            s = self._drone.get_state()
+            self._payload.step(s.position, s.orientation, s.velocity, s.angular_velocity, 0.001)
+            self._payload.attach(drone_core.Vec3(0, 0, -self.config.cable_length))
         
         self._action_history.reset()
         self._prev_action = np.zeros(4, dtype=np.float32)
@@ -366,25 +401,14 @@ class QuadrotorEnv(gym.Env):
         self._steps = 0
         self._episode_reward = 0.0
         self._total_episodes += 1
-        self._hover_duration = 0
         self._prev_rpm = np.full(4, self.config.hover_rpm, dtype=np.float64)
         self._sota_actuator.reset()
+        self._reward_builder.reset()
+        self._obs_builder.reset(seed)
+        self._prev_cable_theta = np.zeros(2)
+        self._cable_angle_rate = np.zeros(2)
         
-        s = self._drone.get_state()
-        pos = np.array([s.position.x, s.position.y, s.position.z])
-        self._prev_dist = np.linalg.norm(self.target - pos)
-        self._prev_vel_toward = 0.0
-        
-        if self.config.motor_dynamics:
-            warmup_rpm = self.config.hover_rpm
-            warmup_cmd = drone_core.MotorCommand(warmup_rpm, warmup_rpm, warmup_rpm, warmup_rpm)
-            for _ in range(5):
-                if self.config.use_sub_stepping:
-                    self._drone.step_with_sub_stepping(warmup_cmd, self.config.dt)
-                else:
-                    self._drone.step(warmup_cmd, self.config.dt)
-            self._drone.set_velocity(drone_core.Vec3(0, 0, 0))
-            self._drone.set_angular_velocity(drone_core.Vec3(0, 0, 0))
+        self._prev_drone_state = self._drone.get_state()
         
         return self._get_obs(), self._get_info()
     
@@ -393,7 +417,6 @@ class QuadrotorEnv(gym.Env):
         action: np.ndarray
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         action = np.clip(action, -1.0, 1.0).astype(np.float64)
-        
         self._action_history.add(action)
         
         voltage = self._drone.get_state().battery_voltage
@@ -410,6 +433,40 @@ class QuadrotorEnv(gym.Env):
         else:
             self._drone.step(cmd, self.config.dt)
         
+        drone_state = self._drone.get_state()
+        
+        if self._payload is not None:
+            self._payload.step(
+                drone_state.position,
+                drone_state.orientation,
+                drone_state.velocity,
+                drone_state.angular_velocity,
+                self.config.dt
+            )
+        
+        if self._estimator is not None:
+            accel = drone_core.Vec3(0, 0, 0)
+            self._last_sensor_reading = self._sensor_sim.simulate(drone_state, accel, self.config.dt)
+            self._last_eskf_state = self._estimator.update(drone_state, accel, self.config.dt)
+            
+            if self._payload is not None and self.config.cable_sensor_enabled:
+                swing = self._payload.get_swing_angle()
+                tension = self._payload.get_coupling_forces().total_tension
+                self._last_cable_reading = self._sensor_sim.simulate_cable_angle(
+                    swing.x, swing.y, tension, self.config.dt
+                )
+                
+                if self._last_cable_reading.valid:
+                    new_theta = np.array([self._last_cable_reading.theta_x, self._last_cable_reading.theta_y])
+                    self._cable_angle_rate = (new_theta - self._prev_cable_theta) / self.config.dt
+                    self._prev_cable_theta = new_theta
+            else:
+                self._last_cable_reading = None
+        else:
+            self._last_sensor_reading = None
+            self._last_eskf_state = None
+            self._last_cable_reading = None
+        
         self.target, self._target_velocity = self._target_generator.update(self.config.dt)
         
         self._steps += 1
@@ -418,49 +475,32 @@ class QuadrotorEnv(gym.Env):
         reward, terminated = self._compute_reward(action)
         truncated = self._steps >= self.config.max_steps
         
-        self._prev_action = action.copy()
+        self._prev_action = action.astype(np.float32).copy()
         self._episode_reward += reward
+        self._prev_drone_state = drone_state
         
         return obs, reward, terminated, truncated, self._get_info()
     
     def _get_obs(self) -> np.ndarray:
-        s = self._drone.get_state()
+        drone_state = self._drone.get_state()
         
-        pos = np.array([s.position.x, s.position.y, s.position.z])
-        vel = np.array([s.velocity.x, s.velocity.y, s.velocity.z])
+        payload_state = None
+        if self._payload is not None:
+            payload_state = self._payload.get_payload_state()
         
-        pos_scaled = pos / self.config.position_scale
-        vel_scaled = vel / self.config.velocity_scale
+        env_state = EnvState(
+            drone_state=drone_state,
+            eskf_state=getattr(self, '_last_eskf_state', None),
+            sensor_reading=getattr(self, '_last_sensor_reading', None),
+            payload_state=payload_state,
+            cable_reading=getattr(self, '_last_cable_reading', None),
+            target_position=self.target,
+            target_velocity=self._target_velocity,
+            prev_action=self._prev_action,
+            cable_angle_rate=self._cable_angle_rate,
+        )
         
-        quat = np.array([s.orientation.w, s.orientation.x, s.orientation.y, s.orientation.z])
-        
-        ang_vel = np.array([
-            s.angular_velocity.x, s.angular_velocity.y, s.angular_velocity.z
-        ]) / self.config.angular_velocity_scale
-        
-        error = (self.target - pos) / self.config.position_scale
-        
-        relative_vel = (self._target_velocity - vel) / self.config.velocity_scale
-        
-        target_vel_scaled = self._target_velocity / self.config.velocity_scale
-        
-        if self.config.observation_noise > 0:
-            noise = self._rng.normal(0, self.config.observation_noise, size=26)
-        else:
-            noise = np.zeros(26)
-        
-        obs = np.concatenate([
-            pos_scaled,
-            vel_scaled,
-            quat,
-            ang_vel,
-            error,
-            relative_vel,
-            target_vel_scaled,
-            self._prev_action
-        ]).astype(np.float32)
-        
-        return obs + noise.astype(np.float32)
+        return self._obs_builder.build(env_state)
     
     def _compute_reward(self, action: np.ndarray) -> Tuple[float, bool]:
         s = self._drone.get_state()
@@ -470,98 +510,55 @@ class QuadrotorEnv(gym.Env):
         ang_vel = np.array([s.angular_velocity.x, s.angular_velocity.y, s.angular_velocity.z])
         
         euler = s.orientation.to_euler_zyx()
-        roll, pitch = abs(euler.x), abs(euler.y)
+        euler_arr = np.array([euler.x, euler.y, euler.z])
         
-        error_vec = self.target - pos
-        dist = np.linalg.norm(error_vec)
-        speed = np.linalg.norm(vel)
+        payload_pos = None
+        swing_angle = 0.0
+        payload_energy = 0.0
         
-        target_dir = error_vec / (dist + 1e-8)
-        vel_toward = np.dot(vel, target_dir)
+        if self._payload is not None:
+            ps = self._payload.get_payload_state()
+            payload_pos = np.array([ps.position.x, ps.position.y, ps.position.z])
+            swing_angle = self._payload.get_cable_angle_from_vertical()
+            payload_energy = self._payload.get_total_energy()
         
-        r_progress = (self._prev_dist - dist) * self.config.reward_progress
-        self._prev_dist = dist
-        
-        r_vel_toward = vel_toward * self.config.reward_velocity_toward * 0.3
-        if vel_toward > 0:
-            r_vel_toward *= 1.5
-        
-        r_proximity = np.exp(-dist * 1.5) * 2.0
-        
-        r_orientation = np.exp(-(roll + pitch) * 4.0) * self.config.reward_orientation
-        
-        omega_mag = np.linalg.norm(ang_vel)
-        r_stability = -omega_mag * 0.05
-        
-        action_rate = self._action_history.get_rate()
-        action_accel = self._action_history.get_accel()
-        
-        r_smooth = -np.sum(action_rate ** 2) * self.config.reward_action_rate
-        r_smooth += -np.sum(action_accel ** 2) * self.config.reward_action_accel
-        
-        if hasattr(self, '_current_rpm'):
-            hover_rpm = self.config.hover_rpm
-            rpm_deviation = np.mean((self._current_rpm - hover_rpm) ** 2)
-            r_efficiency = -rpm_deviation * 5e-9
-        else:
-            r_efficiency = 0.0
-        
-        if pos[2] < 0.4:
-            r_ground = -(0.4 - pos[2]) * 3.0
-        else:
-            r_ground = 0.0
-        
-        r_alive = self.config.reward_alive
-        
-        reward = (
-            r_progress +
-            r_vel_toward +
-            r_proximity +
-            r_orientation +
-            r_stability +
-            r_smooth +
-            r_efficiency +
-            r_ground +
-            r_alive
+        reward_state = RewardState(
+            position=pos,
+            velocity=vel,
+            angular_velocity=ang_vel,
+            euler_angles=euler_arr,
+            target_position=self.target,
+            target_velocity=self._target_velocity,
+            action=action,
+            action_rate=self._action_history.get_rate(),
+            action_accel=self._action_history.get_accel(),
+            motor_rpm=self._current_rpm if hasattr(self, '_current_rpm') else np.zeros(4),
+            hover_rpm=self.config.hover_rpm,
+            payload_swing_angle=swing_angle,
+            payload_position=payload_pos,
+            payload_energy=payload_energy,
         )
         
-        is_hovering = dist < 0.3 and speed < 0.4 and roll < 0.12 and pitch < 0.12
-        if is_hovering:
-            self._hover_duration += 1
-            hover_bonus = min(self._hover_duration / 30.0, self.config.reward_hover_bonus)
-            reward += hover_bonus
-        else:
-            self._hover_duration = max(0, self._hover_duration - 2)
+        reward = self._reward_builder.compute(reward_state)
         
-        terminated = False
-        crashed = False
-        
-        if pos[2] < self.config.crash_height:
-            crashed = True
-        elif dist > self.config.crash_distance:
-            crashed = True
-        elif roll > self.config.crash_angle or pitch > self.config.crash_angle:
-            crashed = True
-        elif speed > self.config.crash_velocity:
-            crashed = True
-        
+        crashed, _ = self._reward_builder.check_termination(reward_state)
         if crashed:
-            reward = self.config.reward_crash
-            terminated = True
+            reward = self._reward_builder.config.crash_penalty
         
-        if dist < self.config.success_distance and speed < self.config.success_velocity:
+        if self._reward_builder.check_success(reward_state):
             self._success_counter += 1
-            if self._success_counter >= self.config.success_hold_steps:
-                reward += self.config.reward_success
+            if self._success_counter >= 50:
+                reward += self._reward_builder.config.success_bonus
         else:
             self._success_counter = max(0, self._success_counter - 1)
         
-        return float(reward), terminated
+        return float(reward), crashed
     
     def _get_info(self) -> Dict[str, Any]:
         s = self._drone.get_state()
         pos = np.array([s.position.x, s.position.y, s.position.z])
-        return {
+        
+        info = {
             'position': pos,
             'target': self.target,
             'target_velocity': self._target_velocity,
@@ -570,9 +567,15 @@ class QuadrotorEnv(gym.Env):
             'episode_reward': self._episode_reward,
             'success_counter': self._success_counter,
             'curriculum_progress': self._curriculum_progress,
-            'target_speed_progress': self._target_speed_progress,
-            'sub_step_count': self._drone.get_sub_step_count() if self.config.use_sub_stepping else 1
+            'sub_step_count': self._drone.get_sub_step_count() if self.config.use_sub_stepping else 1,
+            'observation_mode': self.config.observation_mode,
         }
+        
+        if self._payload is not None:
+            info['payload_swing'] = self._payload.get_cable_angle_from_vertical()
+            info['payload_tension'] = self._payload.get_coupling_forces().total_tension
+        
+        return info
     
     def set_target(self, target: np.ndarray):
         self.target = np.asarray(target, dtype=np.float32)
@@ -581,21 +584,37 @@ class QuadrotorEnv(gym.Env):
     def get_drone_state(self):
         return self._drone.get_state()
     
+    def get_estimated_state(self):
+        if self._estimator is not None:
+            return self._estimator.get_estimated_state()
+        return None
+    
+    def get_payload_state(self):
+        if self._payload is not None:
+            return self._payload.get_payload_state()
+        return None
+    
     def render(self):
         if self.render_mode == 'human':
             s = self._drone.get_state()
-            print(f"Step {self._steps}: pos=({s.position.x:.2f}, {s.position.y:.2f}, {s.position.z:.2f})")
+            msg = f"Step {self._steps}: pos=({s.position.x:.2f}, {s.position.y:.2f}, {s.position.z:.2f})"
+            if self._payload is not None:
+                msg += f" swing={np.degrees(self._payload.get_cable_angle_from_vertical()):.1f}°"
+            print(msg)
+
+
+QuadrotorEnv = QuadrotorEnvV2
 
 
 class VectorizedQuadrotorEnv:
     def __init__(
         self,
         num_envs: int,
-        config: Optional[EnvConfig] = None,
+        config: Optional[ExtendedEnvConfig] = None,
         task: TaskType = TaskType.HOVER
     ):
         self.num_envs = num_envs
-        self.envs = [QuadrotorEnv(config, task) for _ in range(num_envs)]
+        self.envs = [QuadrotorEnvV2(config, task) for _ in range(num_envs)]
         
         self.observation_space = self.envs[0].observation_space
         self.action_space = self.envs[0].action_space
@@ -646,3 +665,6 @@ class VectorizedQuadrotorEnv:
             np.array(truncated_list),
             {'envs': info_list}
         )
+
+
+EnvConfig = ExtendedEnvConfig

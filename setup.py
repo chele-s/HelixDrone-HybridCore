@@ -11,6 +11,7 @@ cpp_sources = [
     "cpp_core/src/StateEstimator.cpp",
     "cpp_core/src/ActuatorFailure.cpp",
     "cpp_core/src/CollisionWorld.cpp",
+    "cpp_core/src/PayloadDynamics.cpp",
 ]
 
 # Definir la extensión
