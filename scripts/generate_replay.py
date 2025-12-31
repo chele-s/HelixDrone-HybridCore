@@ -190,6 +190,19 @@ class ReplayGenerator:
                 
         csv_path = self.logger.save(f'unity_replay_ep{episode_id}.csv')
         
+        rpm_array = np.array(data['rpm'])
+        rpm_diffs = np.abs(np.diff(rpm_array, axis=0))
+        max_rpm_change = np.max(rpm_diffs)
+        mean_rpm_change = np.mean(rpm_diffs)
+        
+        print(f"\n{'='*60}")
+        print("SOTA ACTUATOR SMOOTHNESS ANALYSIS")
+        print(f"{'='*60}")
+        print(f"Max RPM change per step: {max_rpm_change:.2f} RPM")
+        print(f"Mean RPM change per step: {mean_rpm_change:.2f} RPM")
+        print(f"Anti-Bang-Bang: {'PASS' if max_rpm_change < 600 else 'NEEDS TUNING'}")
+        print(f"{'='*60}\n")
+        
         if self.config.generate_plots or self.config.generate_gif:
             traj_data = TrajectoryData(
                 positions=np.array(data['pos']),
