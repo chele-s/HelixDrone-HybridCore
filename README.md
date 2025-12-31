@@ -1255,8 +1255,8 @@ graph TB
         G --> J[Dryden Wind<br/>Turbulence]
         G --> K[Motor Dynamics<br/>ESC/Thermal]
         G --> L[Ground Effect<br/>IGE Model]
-        M[SIMD Math<br/>AVX/SSE] --> G
-        N[SumTree PER<br/>O(log N)] --> D
+        M["SIMD Math<br/>AVX/SSE"] --> G
+        N["SumTree PER<br/>O(log N)"] --> D
     end
     
     B <-->|pybind11| F
