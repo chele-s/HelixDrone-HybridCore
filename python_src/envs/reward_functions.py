@@ -8,11 +8,11 @@ from enum import IntEnum
 @dataclass
 class RewardConfig:
     # Exponential position: R = weight * exp(-decay * dist)
-    position_exp_weight: float = 2.0
-    position_exp_decay: float = 4.0
+    position_exp_weight: float = 1.5
+    position_exp_decay: float = 2.0
     
-    alive_bonus: float = 0.5
-    progress_weight: float = 5.0
+    alive_bonus: float = 0.0
+    progress_weight: float = 3.0
     action_rate_weight: float = -0.1
     action_magnitude_weight: float = -0.01
     angular_velocity_weight: float = -0.05
@@ -133,8 +133,7 @@ class OrientationReward:
     def compute(self, state: RewardState, config: RewardConfig) -> float:
         roll = abs(state.euler_angles[0])
         pitch = abs(state.euler_angles[1])
-        tilt_penalty = roll + pitch
-        return tilt_penalty * config.orientation_weight
+        return np.exp(-(roll + pitch) * 5.0) * 2.0
 
 
 class StabilityReward:
@@ -143,8 +142,8 @@ class StabilityReward:
         return "stability"
     
     def compute(self, state: RewardState, config: RewardConfig) -> float:
-        omega_mag = np.linalg.norm(state.angular_velocity)
-        return omega_mag * config.stability_weight
+        omega_xy = np.linalg.norm(state.angular_velocity[:2])
+        return -omega_xy * 0.1
 
 
 class ActionSmoothnessReward:
@@ -153,9 +152,8 @@ class ActionSmoothnessReward:
         return "action_smoothness"
     
     def compute(self, state: RewardState, config: RewardConfig) -> float:
-        rate_penalty = np.sum(state.action_rate ** 2) * config.action_rate_weight
-        accel_penalty = np.sum(state.action_accel ** 2) * config.action_accel_weight
-        return rate_penalty + accel_penalty
+        action_diff_sq = np.sum(state.action_rate ** 2)
+        return -action_diff_sq * 0.5
 
 
 class EfficiencyReward:
@@ -199,10 +197,10 @@ class HoverBonus:
         roll = abs(state.euler_angles[0])
         pitch = abs(state.euler_angles[1])
         
-        is_hovering = dist < 0.2 and speed < 0.3 and roll < 0.1 and pitch < 0.1
+        is_hovering = dist < 0.3 and speed < 0.3 and roll < 0.15 and pitch < 0.15
         
         if is_hovering:
-            return config.hover_bonus
+            return min(state.hover_duration / 20.0, 4.0)
         return 0.0
 
 
