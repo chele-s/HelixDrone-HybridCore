@@ -44,6 +44,8 @@ class Actor(nn.Module):
         orthogonal_init(self.fc2, gain=np.sqrt(2))
         orthogonal_init(self.fc3, gain=np.sqrt(2))
         orthogonal_init(self.fc_out, gain=0.01)
+        with torch.no_grad():
+            self.fc_out.bias.data[0] = 0.15
     
     def forward(self, state: torch.Tensor) -> torch.Tensor:
         x = F.relu(self.ln1(self.fc1(state)))
@@ -83,10 +85,11 @@ class Critic(nn.Module):
     def _init_weights(self):
         for module in [self.q1_fc1, self.q1_fc2, self.q1_fc3,
                        self.q2_fc1, self.q2_fc2, self.q2_fc3]:
-            orthogonal_init(module, gain=np.sqrt(2))
+            orthogonal_init(module, gain=1.0)
         
-        orthogonal_init(self.q1_out, gain=1.0)
-        orthogonal_init(self.q2_out, gain=1.0)
+        for module in [self.q1_out, self.q2_out]:
+            nn.init.uniform_(module.weight, -0.003, 0.003)
+            nn.init.zeros_(module.bias)
     
     def forward(
         self, 
@@ -260,3 +263,222 @@ def create_mlp(
                 orthogonal_init(layer)
     
     return net
+
+
+class TemporalConv1D(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        dilation: int = 1,
+        use_residual: bool = True
+    ):
+        super(TemporalConv1D, self).__init__()
+        
+        self.use_residual = use_residual
+        padding = (kernel_size - 1) * dilation // 2
+        
+        self.conv = nn.Conv1d(
+            in_channels, out_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            dilation=dilation
+        )
+        self.ln = nn.LayerNorm(out_channels)
+        
+        if use_residual and in_channels != out_channels:
+            self.residual_proj = nn.Conv1d(in_channels, out_channels, kernel_size=1)
+        else:
+            self.residual_proj = None
+        
+        orthogonal_init(self.conv)
+        if self.residual_proj is not None:
+            orthogonal_init(self.residual_proj)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        
+        out = self.conv(x)
+        out = out.transpose(1, 2)
+        out = self.ln(out)
+        out = out.transpose(1, 2)
+        out = F.relu(out)
+        
+        if self.use_residual:
+            if self.residual_proj is not None:
+                residual = self.residual_proj(residual)
+            out = out + residual
+        
+        return out
+
+
+class TemporalEncoder(nn.Module):
+    def __init__(
+        self,
+        frame_dim: int,
+        n_frames: int,
+        hidden_dim: int = 64,
+        n_layers: int = 2
+    ):
+        super(TemporalEncoder, self).__init__()
+        
+        self.frame_dim = frame_dim
+        self.n_frames = n_frames
+        
+        layers = []
+        in_ch = frame_dim
+        
+        for i in range(n_layers):
+            out_ch = hidden_dim * (2 ** i)
+            dilation = 2 ** i
+            layers.append(TemporalConv1D(in_ch, out_ch, kernel_size=3, dilation=dilation))
+            in_ch = out_ch
+        
+        self.conv_layers = nn.ModuleList(layers)
+        self.output_dim = in_ch
+        
+        self.pool = nn.AdaptiveAvgPool1d(1)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch_size = x.shape[0]
+        
+        if x.dim() == 2:
+            x = x.view(batch_size, self.n_frames, self.frame_dim)
+        
+        x = x.transpose(1, 2)
+        
+        for conv in self.conv_layers:
+            x = conv(x)
+        
+        x = self.pool(x).squeeze(-1)
+        
+        return x
+
+
+class TemporalActor(nn.Module):
+    def __init__(
+        self,
+        frame_dim: int,
+        n_frames: int,
+        action_dim: int,
+        hidden_dim: int = 256,
+        temporal_hidden: int = 64,
+        temporal_layers: int = 2,
+        max_action: float = 1.0
+    ):
+        super(TemporalActor, self).__init__()
+        
+        self.max_action = max_action
+        self.frame_dim = frame_dim
+        self.n_frames = n_frames
+        
+        self.temporal_encoder = TemporalEncoder(
+            frame_dim=frame_dim,
+            n_frames=n_frames,
+            hidden_dim=temporal_hidden,
+            n_layers=temporal_layers
+        )
+        
+        encoder_out = self.temporal_encoder.output_dim
+        
+        self.fc1 = nn.Linear(encoder_out, hidden_dim)
+        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.ln2 = nn.LayerNorm(hidden_dim)
+        self.fc_out = nn.Linear(hidden_dim, action_dim)
+        
+        orthogonal_init(self.fc1)
+        orthogonal_init(self.fc2)
+        orthogonal_init(self.fc_out, gain=0.01)
+    
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        x = self.temporal_encoder(state)
+        
+        x = F.relu(self.ln1(self.fc1(x)))
+        x = F.relu(self.ln2(self.fc2(x)))
+        
+        return torch.tanh(self.fc_out(x)) * self.max_action
+
+
+class TemporalCritic(nn.Module):
+    def __init__(
+        self,
+        frame_dim: int,
+        n_frames: int,
+        action_dim: int,
+        hidden_dim: int = 256,
+        temporal_hidden: int = 64,
+        temporal_layers: int = 2
+    ):
+        super(TemporalCritic, self).__init__()
+        
+        self.frame_dim = frame_dim
+        self.n_frames = n_frames
+        
+        self.temporal_encoder_q1 = TemporalEncoder(
+            frame_dim=frame_dim,
+            n_frames=n_frames,
+            hidden_dim=temporal_hidden,
+            n_layers=temporal_layers
+        )
+        self.temporal_encoder_q2 = TemporalEncoder(
+            frame_dim=frame_dim,
+            n_frames=n_frames,
+            hidden_dim=temporal_hidden,
+            n_layers=temporal_layers
+        )
+        
+        encoder_out = self.temporal_encoder_q1.output_dim
+        combined_dim = encoder_out + action_dim
+        
+        self.q1_fc1 = nn.Linear(combined_dim, hidden_dim)
+        self.q1_ln1 = nn.LayerNorm(hidden_dim)
+        self.q1_fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.q1_ln2 = nn.LayerNorm(hidden_dim)
+        self.q1_out = nn.Linear(hidden_dim, 1)
+        
+        self.q2_fc1 = nn.Linear(combined_dim, hidden_dim)
+        self.q2_ln1 = nn.LayerNorm(hidden_dim)
+        self.q2_fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.q2_ln2 = nn.LayerNorm(hidden_dim)
+        self.q2_out = nn.Linear(hidden_dim, 1)
+        
+        for layer in [self.q1_fc1, self.q1_fc2, self.q2_fc1, self.q2_fc2]:
+            orthogonal_init(layer)
+        orthogonal_init(self.q1_out, gain=1.0)
+        orthogonal_init(self.q2_out, gain=1.0)
+    
+    def forward(
+        self,
+        state: torch.Tensor,
+        action: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        s1 = self.temporal_encoder_q1(state)
+        s2 = self.temporal_encoder_q2(state)
+        
+        sa1 = torch.cat([s1, action], dim=-1)
+        sa2 = torch.cat([s2, action], dim=-1)
+        
+        q1 = F.relu(self.q1_ln1(self.q1_fc1(sa1)))
+        q1 = F.relu(self.q1_ln2(self.q1_fc2(q1)))
+        q1 = self.q1_out(q1)
+        
+        q2 = F.relu(self.q2_ln1(self.q2_fc1(sa2)))
+        q2 = F.relu(self.q2_ln2(self.q2_fc2(q2)))
+        q2 = self.q2_out(q2)
+        
+        return q1, q2
+    
+    def q1_forward(
+        self,
+        state: torch.Tensor,
+        action: torch.Tensor
+    ) -> torch.Tensor:
+        s1 = self.temporal_encoder_q1(state)
+        sa1 = torch.cat([s1, action], dim=-1)
+        
+        q1 = F.relu(self.q1_ln1(self.q1_fc1(sa1)))
+        q1 = F.relu(self.q1_ln2(self.q1_fc2(q1)))
+        
+        return self.q1_out(q1)

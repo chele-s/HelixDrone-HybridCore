@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(ROOT_DIR, 'build', 'Release'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'build'))
 
 from python_src.envs.drone_env import QuadrotorEnv, EnvConfig, TaskType
+from python_src.envs.frame_stack import FrameStack
 from python_src.agents import TD3Agent, create_agent
 from python_src.utils.csv_logger import CSVLogger, CSVLoggerConfig
 from python_src.utils.visualization import DroneVisualizer, TrajectoryData, VisualizationConfig
@@ -33,6 +34,7 @@ class ReplayConfig:
     device: str = 'auto'
     obs_norm_clip: float = 10.0
     trajectory_type: str = 'figure8'
+    frame_stack_size: int = 3
 
 class DynamicTarget:
     def __init__(self, mode: str = 'figure8', center: np.ndarray = np.array([0, 0, 2.0])):
@@ -42,7 +44,10 @@ class DynamicTarget:
         
     def update(self, dt: float) -> np.ndarray:
         self.t += dt
-        if self.mode == 'figure8':
+        if self.mode == 'hover':
+            # Static hover target - no movement
+            return self.center.copy()
+        elif self.mode == 'figure8':
             x = 2.0 * np.sin(0.5 * self.t)
             y = 2.0 * np.sin(1.0 * self.t)
             z = self.center[2] + 0.5 * np.sin(0.2 * self.t)
@@ -79,7 +84,12 @@ class ReplayGenerator:
             self.device = torch.device(self.config.device)
             
     def _setup_env(self):
-        self.env = QuadrotorEnv(config=self.env_config, task=TaskType.HOVER)
+        base_env = QuadrotorEnv(config=self.env_config, task=TaskType.HOVER)
+        if self.config.frame_stack_size > 1:
+            self.env = FrameStack(base_env, num_stack=self.config.frame_stack_size)
+        else:
+            self.env = base_env
+        self.base_env = base_env
         self.state_dim = self.env.observation_space.shape[0]
         self.action_dim = self.env.action_space.shape[0]
         
@@ -165,12 +175,12 @@ class ReplayGenerator:
         
         for step in range(self.config.max_steps):
             current_target = target_generator.update(self.env_config.dt)
-            self.env.target = current_target
+            self.base_env.target = current_target
             
             action = self.agent.get_action(obs, add_noise=False)
             
-            state = self.env.get_drone_state()
-            self.logger.log_step(state, action, 0.0, step * self.env_config.dt)
+            state = self.base_env.get_drone_state()
+            self.logger.log_step(state, action, 0.0, step * self.env_config.dt, target=current_target)
             
             next_obs_raw, reward, terminated, truncated, info = self.env.step(action)
             obs = self._normalize_obs(next_obs_raw)

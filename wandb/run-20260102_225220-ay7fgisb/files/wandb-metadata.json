@@ -1,0 +1,40 @@
+{
+  "os":  "Windows-10-10.0.22631-SP0",
+  "python":  "CPython 3.11.9",
+  "startedAt":  "2026-01-03T04:52:20.923471Z",
+  "program":  "C:\\Users\\elche\\OneDrive\\Documentos\\GitHub\\HelixDrone-HybridCore\\scripts\\train.py",
+  "codePath":  "scripts\\train.py",
+  "codePathLocal":  "scripts\\train.py",
+  "git":  {
+    "remote":  "https://github.com/chele-s/HelixDrone-HybridCore.git",
+    "commit":  "b2599214dca708527b826698f9be5c09050d8af6"
+  },
+  "email":  "alvanezg1@gmail.com",
+  "root":  "C:\\Users\\elche\\OneDrive\\Documentos\\GitHub\\HelixDrone-HybridCore",
+  "host":  "chele911-pc",
+  "executable":  "C:\\Users\\elche\\OneDrive\\Documentos\\GitHub\\HelixDrone-HybridCore\\.venv\\Scripts\\python.exe",
+  "cpu_count":  4,
+  "cpu_count_logical":  8,
+  "gpu":  "NVIDIA GeForce GTX 1650",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "479261958144",
+      "used":  "391895379968"
+    }
+  },
+  "memory":  {
+    "total":  "17026215936"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA GeForce GTX 1650",
+      "memoryTotal":  "4294967296",
+      "cudaCores":  896,
+      "architecture":  "Turing",
+      "uuid":  "GPU-c3572e8f-6403-93c6-3ae4-a5af7a1291c5"
+    }
+  ],
+  "cudaVersion":  "12.6",
+  "writerId":  "ij6glef524hrg1kvrsl43x753v8frvwr"
+}

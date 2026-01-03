@@ -16,6 +16,7 @@ class TelemetryFrame:
     motor_rpms: np.ndarray
     reward: float = 0.0
     action: Optional[np.ndarray] = None
+    target: Optional[np.ndarray] = None
     
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -44,6 +45,11 @@ class TelemetryFrame:
             for i, a in enumerate(self.action):
                 d[f'action_{i}'] = a
         
+        if self.target is not None:
+            d['target_x'] = self.target[0]
+            d['target_y'] = self.target[1]
+            d['target_z'] = self.target[2]
+        
         return d
     
     def to_unity_dict(self, scale: float = 1.0) -> Dict[str, Any]:
@@ -60,7 +66,7 @@ class TelemetryFrame:
             self.orientation[1]
         ])
         
-        return {
+        d = {
             'timestamp': self.timestamp,
             'pos_x': pos_unity[0],
             'pos_y': pos_unity[1],
@@ -74,6 +80,18 @@ class TelemetryFrame:
             'rpm_2': self.motor_rpms[2],
             'rpm_3': self.motor_rpms[3]
         }
+        
+        if self.target is not None:
+            target_unity = np.array([
+                -self.target[1] * scale,
+                self.target[2] * scale,
+                self.target[0] * scale
+            ])
+            d['target_x'] = target_unity[0]
+            d['target_y'] = target_unity[1]
+            d['target_z'] = target_unity[2]
+        
+        return d
 
 
 @dataclass
@@ -109,7 +127,8 @@ class CSVLogger:
         state,
         action: Optional[np.ndarray] = None,
         reward: float = 0.0,
-        timestamp: Optional[float] = None
+        timestamp: Optional[float] = None,
+        target: Optional[np.ndarray] = None
     ):
         if timestamp is None:
             timestamp = len(self._frames) * 0.02
@@ -140,7 +159,8 @@ class CSVLogger:
             angular_velocity=angular_velocity,
             motor_rpms=motor_rpms,
             reward=reward,
-            action=action
+            action=action,
+            target=target
         )
         
         self._frames.append(frame)

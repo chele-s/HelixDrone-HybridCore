@@ -466,6 +466,7 @@ PYBIND11_MODULE(drone_core, m) {
         .def_readwrite("max_rpm", &SOTAActuatorConfig::maxRpm)
         .def_readwrite("min_rpm", &SOTAActuatorConfig::minRpm)
         .def_readwrite("hover_rpm", &SOTAActuatorConfig::hoverRpm)
+        .def_readwrite("rpm_range", &SOTAActuatorConfig::rpmRange)
         .def_readwrite("max_slew_rate", &SOTAActuatorConfig::maxSlewRate)
         .def_readwrite("process_noise_std", &SOTAActuatorConfig::processNoiseStd)
         .def_readwrite("active_braking_gain", &SOTAActuatorConfig::activeBrakingGain)

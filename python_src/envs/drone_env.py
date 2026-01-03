@@ -1,4 +1,4 @@
-"""Extended drone environment with ESKF, Payload, and Collision integration."""
+                                                                               
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'Release'))
@@ -16,6 +16,7 @@ from .observation_builder import (
     create_observation_builder
 )
 from .reward_functions import RewardBuilder, RewardConfig, RewardState
+from .motor_mixer import MotorMixer, MotorMixerConfig
 
 
 class TaskType(IntEnum):
@@ -30,12 +31,12 @@ class TaskType(IntEnum):
 @dataclass
 class ExtendedEnvConfig:
     dt: float = 0.01
-    physics_sub_steps: int = 4
-    max_steps: int = 2000
+    physics_sub_steps: int = 8
+    max_steps: int = 1000
     max_rpm: float = 35000.0
-    min_rpm: float = 2000.0
-    hover_rpm: float = 2750.0
-    rpm_range: float = 2000.0
+    min_rpm: float = 1000.0
+    hover_rpm: float = 2700.0
+    rpm_range: float = 2500.0
     mass: float = 0.6
     
     position_scale: float = 5.0
@@ -60,6 +61,7 @@ class ExtendedEnvConfig:
     wind_speed_range: Tuple[float, float] = (0.0, 4.0)
     motor_dynamics: bool = True
     use_sub_stepping: bool = True
+    use_motor_mixer: bool = True
     
     observation_noise: float = 0.01
     action_delay_steps: int = 0
@@ -164,13 +166,14 @@ class TargetGenerator:
 
 
 class QuadrotorEnvV2(gym.Env):
-    """SOTA Quadrotor environment with ESKF, Payload, and modular components."""
+                                                                                
     
     metadata = {'render_modes': ['human'], 'render_fps': 50}
     
     def __init__(
         self,
         config: Optional[ExtendedEnvConfig] = None,
+        reward_config: Optional['RewardConfig'] = None,
         task: TaskType = TaskType.HOVER,
         target: Optional[np.ndarray] = None,
         render_mode: Optional[str] = None
@@ -178,6 +181,7 @@ class QuadrotorEnvV2(gym.Env):
         super().__init__()
         
         self.config = config or ExtendedEnvConfig()
+        self._reward_config = reward_config
         self.task = task
         self.render_mode = render_mode
         
@@ -254,20 +258,26 @@ class QuadrotorEnvV2(gym.Env):
     
     def _setup_sota_actuator(self):
         actuator_cfg = drone_core.SOTAActuatorConfig()
-        actuator_cfg.delay_ms = 15.0
-        actuator_cfg.tau_spin_up = 0.10
-        actuator_cfg.tau_spin_down = 0.05
-        actuator_cfg.rotor_inertia = 2.0e-5
-        actuator_cfg.voltage_sag_factor = 0.06
+        actuator_cfg.delay_ms = 5.0
+        actuator_cfg.tau_spin_up = 0.03
+        actuator_cfg.tau_spin_down = 0.015
+        actuator_cfg.rotor_inertia = 1.0e-5
+        actuator_cfg.voltage_sag_factor = 0.0
         actuator_cfg.max_rpm = self.config.max_rpm
         actuator_cfg.min_rpm = self.config.min_rpm
         actuator_cfg.hover_rpm = self.config.hover_rpm
-        actuator_cfg.max_slew_rate = 50000.0
-        actuator_cfg.process_noise_std = 20.0
-        actuator_cfg.active_braking_gain = 1.8
-        actuator_cfg.thermal_time_constant = 25.0
+        actuator_cfg.rpm_range = self.config.rpm_range
+        actuator_cfg.max_slew_rate = 100000.0
+        actuator_cfg.process_noise_std = 5.0
+        actuator_cfg.active_braking_gain = 2.0
+        actuator_cfg.thermal_time_constant = 1000.0
         actuator_cfg.nominal_voltage = 16.8
         self._sota_actuator = drone_core.SOTAActuatorModel(actuator_cfg)
+        
+        if self.config.use_motor_mixer:
+            self._motor_mixer = MotorMixer(MotorMixerConfig())
+        else:
+            self._motor_mixer = None
     
     def _setup_estimation(self):
         if self.config.use_eskf:
@@ -297,9 +307,9 @@ class QuadrotorEnvV2(gym.Env):
     
     def _setup_observation_builder(self):
         mode_map = {
-            'true_state': ObservationMode.TRUE_STATE,
+            'true': ObservationMode.TRUE_STATE,
             'estimated': ObservationMode.ESTIMATED,
-            'sensor_only': ObservationMode.SENSOR_ONLY,
+            'sensor': ObservationMode.SENSOR_ONLY,
         }
         
         obs_config = ObsConfig(
@@ -315,8 +325,9 @@ class QuadrotorEnvV2(gym.Env):
         self._obs_builder = ObservationBuilder(obs_config)
     
     def _setup_reward_builder(self):
+        reward_cfg = self._reward_config if self._reward_config is not None else RewardConfig()
         self._reward_builder = RewardBuilder(
-            config=RewardConfig(),
+            config=reward_cfg,
             include_payload=self.config.payload_enabled
         )
     
@@ -417,10 +428,16 @@ class QuadrotorEnvV2(gym.Env):
         action: np.ndarray
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         action = np.clip(action, -1.0, 1.0).astype(np.float64)
-        self._action_history.add(action)
+        
+        if self._motor_mixer is not None:
+            motor_action = self._motor_mixer.mix(action)
+        else:
+            motor_action = action
+        
+        self._action_history.add(motor_action)
         
         voltage = self._drone.get_state().battery_voltage
-        rpm = self._sota_actuator.step_normalized(action, self.config.dt, voltage)
+        rpm = self._sota_actuator.step_normalized(motor_action, self.config.dt, voltage)
         rpm = np.array(rpm, dtype=np.float64)
         
         self._prev_rpm = rpm.copy()
@@ -541,7 +558,8 @@ class QuadrotorEnvV2(gym.Env):
         
         reward = self._reward_builder.compute(reward_state)
         
-        crashed, _ = self._reward_builder.check_termination(reward_state)
+        crashed, crash_reason = self._reward_builder.check_termination(reward_state)
+        self._last_crash_reason = crash_reason if crashed else None
         if crashed:
             reward = self._reward_builder.config.crash_penalty
         
@@ -557,18 +575,27 @@ class QuadrotorEnvV2(gym.Env):
     def _get_info(self) -> Dict[str, Any]:
         s = self._drone.get_state()
         pos = np.array([s.position.x, s.position.y, s.position.z])
+        vel = np.array([s.velocity.x, s.velocity.y, s.velocity.z])
+        euler = s.orientation.to_euler_zyx()
         
         info = {
             'position': pos,
+            'velocity': vel,
+            'speed': np.linalg.norm(vel),
+            'roll': euler.x,
+            'pitch': euler.y,
+            'yaw': euler.z,
             'target': self.target,
             'target_velocity': self._target_velocity,
-            'distance': np.linalg.norm(self.target - pos),
+            'target_error': np.linalg.norm(self.target - pos),
             'steps': self._steps,
-            'episode_reward': self._episode_reward,
+            'reward': self._episode_reward,
             'success_counter': self._success_counter,
             'curriculum_progress': self._curriculum_progress,
-            'sub_step_count': self._drone.get_sub_step_count() if self.config.use_sub_stepping else 1,
-            'observation_mode': self.config.observation_mode,
+            'crash_reason': getattr(self, '_last_crash_reason', None),
+            'rpm': self._current_rpm.copy() if hasattr(self, '_current_rpm') else np.zeros(4),
+            'rpm_mean': np.mean(self._current_rpm) if hasattr(self, '_current_rpm') else 0,
+            'battery_voltage': s.battery_voltage,
         }
         
         if self._payload is not None:
@@ -593,6 +620,46 @@ class QuadrotorEnvV2(gym.Env):
         if self._payload is not None:
             return self._payload.get_payload_state()
         return None
+
+    def set_physics_params(
+        self,
+        mass: Optional[float] = None,
+        motor_lag: Optional[float] = None,
+        friction: Optional[float] = None,
+        inertia_scale: Optional[float] = None
+    ):
+        if mass is not None:
+            self._cfg.mass = mass
+            if hasattr(self._drone, 'set_mass'):
+                self._drone.set_mass(mass)
+            self._drone.update_config(self._cfg)
+        
+        if motor_lag is not None:
+            self._sota_actuator.config.tau_spin_up = motor_lag
+            self._sota_actuator.config.tau_spin_down = motor_lag * 0.5
+            if hasattr(self._sota_actuator, 'set_motor_lag'):
+                self._sota_actuator.set_motor_lag(motor_lag)
+
+        if inertia_scale is not None and hasattr(self._drone, 'set_inertia_scale'):
+            self._drone.set_inertia_scale(inertia_scale)
+
+    def set_wind_intensity(self, intensity: float):
+        if not self.config.wind_enabled:
+            return
+            
+        if hasattr(self._drone, 'set_wind_config'):
+            wind_cfg = drone_core.WindConfig()
+            wind_cfg.enabled = intensity > 0.01
+            wind_cfg.intensity = intensity
+            self._drone.set_wind_config(wind_cfg)
+        else:
+            wind_dir = self._rng.uniform(0, 2 * np.pi)
+            wind = drone_core.Vec3(
+                intensity * np.cos(wind_dir),
+                intensity * np.sin(wind_dir),
+                self._rng.uniform(-0.1 * intensity, 0.1 * intensity)
+            )
+            self._drone.set_wind(wind)
     
     def render(self):
         if self.render_mode == 'human':
@@ -611,10 +678,11 @@ class VectorizedQuadrotorEnv:
         self,
         num_envs: int,
         config: Optional[ExtendedEnvConfig] = None,
+        reward_config: Optional['RewardConfig'] = None,
         task: TaskType = TaskType.HOVER
     ):
         self.num_envs = num_envs
-        self.envs = [QuadrotorEnvV2(config, task) for _ in range(num_envs)]
+        self.envs = [QuadrotorEnvV2(config, reward_config, task) for _ in range(num_envs)]
         
         self.observation_space = self.envs[0].observation_space
         self.action_space = self.envs[0].action_space

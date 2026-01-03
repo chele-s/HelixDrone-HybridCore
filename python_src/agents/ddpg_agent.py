@@ -81,7 +81,8 @@ class DDPGAgent:
         gamma: float = 0.99,
         tau: float = 0.005,
         max_action: float = 1.0,
-        gradient_clip: float = 1.0
+        gradient_clip: float = 1.0,
+        **kwargs
     ):
         self.device = device
         self.gamma = gamma
@@ -89,13 +90,14 @@ class DDPGAgent:
         self.max_action = max_action
         self.gradient_clip = gradient_clip
         self.state_dim = state_dim
+        self.critic_state_dim = kwargs.get('critic_state_dim', state_dim)
         self.action_dim = action_dim
         
         self.actor = Actor(state_dim, action_dim, hidden_dim, max_action).to(device)
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor)
         
-        self.critic = Critic(state_dim, action_dim, hidden_dim).to(device)
+        self.critic = Critic(self.critic_state_dim, action_dim, hidden_dim).to(device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr_critic)
         
@@ -153,33 +155,40 @@ class DDPGAgent:
         is_per = isinstance(replay_buffer, (PrioritizedReplayBuffer, CppPrioritizedReplayBuffer))
         
         if is_per:
-            states, actions, rewards, next_states, dones, weights, indices = \
-                replay_buffer.sample(batch_size)
+            batch = replay_buffer.sample(batch_size)
+            states, actions, rewards, next_states, dones, weights, indices = batch[:7]
+            if len(batch) > 7:
+                states_critic, next_states_critic = batch[7:9]
+            else:
+                states_critic, next_states_critic = states, next_states
         else:
-            states, actions, rewards, next_states, dones = \
-                replay_buffer.sample(batch_size)
+            batch = replay_buffer.sample(batch_size)
+            states, actions, rewards, next_states, dones = batch[:5]
+            if len(batch) > 5:
+                states_critic, next_states_critic = batch[5:7]
+            else:
+                states_critic, next_states_critic = states, next_states
             weights = torch.ones(batch_size, 1).to(self.device)
         
         with torch.no_grad():
             next_actions = self.actor_target(next_states)
-            target_q1, target_q2 = self.critic_target(next_states, next_actions)
+            target_q1, target_q2 = self.critic_target(next_states_critic, next_actions)
             target_q = torch.min(target_q1, target_q2)
             target_q = rewards + (1 - dones) * self.gamma * target_q
         
-        current_q1, current_q2 = self.critic(states, actions)
+        current_q1, current_q2 = self.critic(states_critic, actions)
         
         td_errors1 = target_q - current_q1
         td_errors2 = target_q - current_q2
         
-        critic_loss = (weights * (td_errors1 ** 2)).mean() + \
-                      (weights * (td_errors2 ** 2)).mean()
+        critic_loss = (weights * (td_errors1 ** 2)).mean() +                      (weights * (td_errors2 ** 2)).mean()
         
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         nn.utils.clip_grad_norm_(self.critic.parameters(), self.gradient_clip)
         self.critic_optimizer.step()
         
-        actor_loss = -self.critic.q1_forward(states, self.actor(states)).mean()
+        actor_loss = -self.critic.q1_forward(states_critic, self.actor(states)).mean()
         
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -256,7 +265,8 @@ class TD3Agent:
         policy_noise: float = 0.2,
         noise_clip: float = 0.5,
         policy_delay: int = 2,
-        gradient_clip: float = 1.0
+        gradient_clip: float = 1.0,
+        **kwargs
     ):
         self.device = device
         self.gamma = gamma
@@ -267,13 +277,14 @@ class TD3Agent:
         self.policy_delay = policy_delay
         self.gradient_clip = gradient_clip
         self.state_dim = state_dim
+        self.critic_state_dim = kwargs.get('critic_state_dim', state_dim)
         self.action_dim = action_dim
         
         self.actor = Actor(state_dim, action_dim, hidden_dim, max_action).to(device)
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor)
         
-        self.critic = Critic(state_dim, action_dim, hidden_dim).to(device)
+        self.critic = Critic(self.critic_state_dim, action_dim, hidden_dim).to(device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr_critic)
         
@@ -332,11 +343,19 @@ class TD3Agent:
         is_per = isinstance(replay_buffer, (PrioritizedReplayBuffer, CppPrioritizedReplayBuffer))
         
         if is_per:
-            states, actions, rewards, next_states, dones, weights, indices = \
-                replay_buffer.sample(batch_size)
+            batch = replay_buffer.sample(batch_size)
+            states, actions, rewards, next_states, dones, weights, indices = batch[:7]
+            if len(batch) > 7:
+                states_critic, next_states_critic = batch[7:9]
+            else:
+                states_critic, next_states_critic = states, next_states
         else:
-            states, actions, rewards, next_states, dones = \
-                replay_buffer.sample(batch_size)
+            batch = replay_buffer.sample(batch_size)
+            states, actions, rewards, next_states, dones = batch[:5]
+            if len(batch) > 5:
+                states_critic, next_states_critic = batch[5:7]
+            else:
+                states_critic, next_states_critic = states, next_states
             weights = torch.ones(batch_size, 1).to(self.device)
         
         with torch.no_grad():
@@ -348,17 +367,16 @@ class TD3Agent:
                 self.actor_target(next_states) + noise
             ).clamp(-self.max_action, self.max_action)
             
-            target_q1, target_q2 = self.critic_target(next_states, next_actions)
+            target_q1, target_q2 = self.critic_target(next_states_critic, next_actions)
             target_q = torch.min(target_q1, target_q2)
             target_q = rewards + (1 - dones) * self.gamma * target_q
         
-        current_q1, current_q2 = self.critic(states, actions)
+        current_q1, current_q2 = self.critic(states_critic, actions)
         
         td_errors1 = target_q - current_q1
         td_errors2 = target_q - current_q2
         
-        critic_loss = (weights * (td_errors1 ** 2)).mean() + \
-                      (weights * (td_errors2 ** 2)).mean()
+        critic_loss = (weights * (td_errors1 ** 2)).mean() +                      (weights * (td_errors2 ** 2)).mean()
         
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
@@ -380,7 +398,7 @@ class TD3Agent:
         }
         
         if self._train_steps % self.policy_delay == 0:
-            actor_loss = -self.critic.q1_forward(states, self.actor(states)).mean()
+            actor_loss = -self.critic.q1_forward(states_critic, self.actor(states)).mean()
             
             self.actor_optimizer.zero_grad()
             actor_loss.backward()

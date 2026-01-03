@@ -12,7 +12,11 @@ from .observation_builder import (
     ObsConfig,
     ObservationMode,
     EnvState,
-    create_observation_builder
+    create_observation_builder,
+    FrameStackWrapper,
+    FrameStackConfig,
+    AsymmetricObsWrapper,
+    AsymmetricObsConfig
 )
 
 from .reward_functions import (
@@ -33,6 +37,10 @@ __all__ = [
     'ObservationMode',
     'EnvState',
     'create_observation_builder',
+    'FrameStackWrapper',
+    'FrameStackConfig',
+    'AsymmetricObsWrapper',
+    'AsymmetricObsConfig',
     'RewardBuilder',
     'RewardConfig',
     'RewardState',

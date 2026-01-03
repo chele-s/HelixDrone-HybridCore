@@ -7,28 +7,32 @@ from enum import IntEnum
 
 @dataclass
 class RewardConfig:
-    position_weight: float = -0.5
-    velocity_weight: float = -0.02
-    angular_velocity_weight: float = -0.01
-    orientation_weight: float = 2.0
+    # Exponential position: R = weight * exp(-decay * dist)
+    position_exp_weight: float = 2.0
+    position_exp_decay: float = 4.0
     
-    alive_bonus: float = 0.3
-    crash_penalty: float = -50.0
+    alive_bonus: float = 0.5
+    progress_weight: float = 5.0
+    action_rate_weight: float = -0.1
+    action_magnitude_weight: float = -0.01
+    angular_velocity_weight: float = -0.05
+    
+    # Legacy (compatibility)
+    velocity_weight: float = 0.0
+    orientation_weight: float = 0.0
+    velocity_toward_weight: float = 0.0
+    proximity_weight: float = 0.0
+    action_accel_weight: float = 0.0
+    hover_bonus: float = 0.0
+    stability_weight: float = 0.0
+    efficiency_weight: float = 0.0
+    position_weight: float = 0.0
+    
+    # Termination
+    crash_penalty: float = -25.0
     success_bonus: float = 100.0
     
-    progress_weight: float = 4.0
-    velocity_toward_weight: float = 3.0
-    proximity_weight: float = 2.0
-    
-    action_rate_weight: float = -0.15
-    action_accel_weight: float = -0.08
-    action_magnitude_weight: float = -0.01
-    
-    hover_bonus: float = 3.0
-    stability_weight: float = -0.05
-    efficiency_weight: float = -5e-9
-    
-    ground_penalty_weight: float = -3.0
+    ground_penalty_weight: float = -5.0
     ground_threshold: float = 0.4
     
     payload_swing_weight: float = -0.5
@@ -36,14 +40,15 @@ class RewardConfig:
     payload_energy_weight: float = -0.1
     
     collision_penalty: float = -10.0
+    thrust_activity_weight: float = 0.3
     
-    success_distance: float = 0.25
-    success_velocity: float = 0.4
+    success_distance: float = 0.1     
+    success_velocity: float = 0.2     
     
-    crash_height: float = 0.05
-    crash_distance: float = 15.0
-    crash_angle: float = 1.2
-    crash_velocity: float = 8.0
+    crash_height: float = 0.05        
+    crash_distance: float = 3.0      
+    crash_angle: float = 0.5         
+    crash_velocity: float = 10.0
 
 
 @dataclass
@@ -117,7 +122,7 @@ class ProximityReward:
     
     def compute(self, state: RewardState, config: RewardConfig) -> float:
         dist = np.linalg.norm(state.target_position - state.position)
-        return np.exp(-dist * 1.5) * config.proximity_weight
+        return config.position_exp_weight * np.exp(-config.position_exp_decay * dist)
 
 
 class OrientationReward:
@@ -128,7 +133,8 @@ class OrientationReward:
     def compute(self, state: RewardState, config: RewardConfig) -> float:
         roll = abs(state.euler_angles[0])
         pitch = abs(state.euler_angles[1])
-        return np.exp(-(roll + pitch) * 4.0) * config.orientation_weight
+        tilt_penalty = roll + pitch
+        return tilt_penalty * config.orientation_weight
 
 
 class StabilityReward:
@@ -193,10 +199,10 @@ class HoverBonus:
         roll = abs(state.euler_angles[0])
         pitch = abs(state.euler_angles[1])
         
-        is_hovering = dist < 0.3 and speed < 0.4 and roll < 0.12 and pitch < 0.12
+        is_hovering = dist < 0.2 and speed < 0.3 and roll < 0.1 and pitch < 0.1
         
         if is_hovering:
-            return min(state.hover_duration / 30.0, config.hover_bonus)
+            return config.hover_bonus
         return 0.0
 
 
@@ -234,6 +240,23 @@ class PayloadEnergyPenalty:
         return abs(state.payload_energy) * config.payload_energy_weight
 
 
+class ThrustActivityBonus:
+    @property
+    def name(self) -> str:
+        return "thrust_activity"
+    
+    def compute(self, state: RewardState, config: RewardConfig) -> float:
+        mean_rpm = np.mean(state.motor_rpm)
+        ratio = mean_rpm / state.hover_rpm if state.hover_rpm > 0 else 0
+        if ratio < 0.85:
+            return -config.thrust_activity_weight * 2.0
+        elif ratio < 0.95:
+            return -config.thrust_activity_weight * 0.5
+        elif ratio > 1.15:
+            return config.thrust_activity_weight * 0.5
+        return config.thrust_activity_weight
+
+
 class CollisionPenalty:
     @property
     def name(self) -> str:
@@ -263,6 +286,7 @@ class RewardBuilder:
         self.terms.append(GroundProximityPenalty())
         self.terms.append(AliveBonus())
         self.terms.append(HoverBonus())
+        self.terms.append(ThrustActivityBonus())
         
         if include_payload:
             self.terms.append(PayloadSwingPenalty())

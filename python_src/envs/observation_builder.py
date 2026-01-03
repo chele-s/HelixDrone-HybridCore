@@ -371,3 +371,257 @@ def create_observation_builder(
     )
     
     return ObservationBuilder(config)
+
+
+@dataclass
+class FrameStackConfig:
+    n_frames: int = 4
+    flatten: bool = True
+    include_delta: bool = True
+    delta_scale: float = 10.0
+
+
+class FrameStackWrapper:
+    def __init__(
+        self,
+        env,
+        config: Optional[FrameStackConfig] = None
+    ):
+        self.env = env
+        self.config = config or FrameStackConfig()
+        
+        self._base_obs_dim = env.observation_space.shape[0]
+        self._frames: List[np.ndarray] = []
+        self._prev_frame: Optional[np.ndarray] = None
+        
+        self._setup_observation_space()
+    
+    def _setup_observation_space(self):
+        n = self.config.n_frames
+        base_dim = self._base_obs_dim
+        
+        if self.config.include_delta:
+            frame_dim = base_dim * 2
+        else:
+            frame_dim = base_dim
+        
+        if self.config.flatten:
+            total_dim = frame_dim * n
+            self.observation_space = gym.spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(total_dim,),
+                dtype=np.float32
+            )
+        else:
+            self.observation_space = gym.spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(n, frame_dim),
+                dtype=np.float32
+            )
+    
+    def _process_frame(self, obs: np.ndarray) -> np.ndarray:
+        if not self.config.include_delta:
+            return obs.astype(np.float32)
+        
+        if self._prev_frame is None:
+            delta = np.zeros_like(obs)
+        else:
+            delta = (obs - self._prev_frame) * self.config.delta_scale
+        
+        self._prev_frame = obs.copy()
+        return np.concatenate([obs, delta]).astype(np.float32)
+    
+    def _stack_frames(self) -> np.ndarray:
+        while len(self._frames) < self.config.n_frames:
+            if self._frames:
+                self._frames.insert(0, self._frames[0].copy())
+            else:
+                frame_dim = self._base_obs_dim * (2 if self.config.include_delta else 1)
+                self._frames.append(np.zeros(frame_dim, dtype=np.float32))
+        
+        stacked = np.array(self._frames[-self.config.n_frames:])
+        
+        if self.config.flatten:
+            return stacked.flatten()
+        return stacked
+    
+    def reset(self, **kwargs):
+        self._frames.clear()
+        self._prev_frame = None
+        
+        obs, info = self.env.reset(**kwargs)
+        processed = self._process_frame(obs)
+        self._frames.append(processed)
+        
+        return self._stack_frames(), info
+    
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        processed = self._process_frame(obs)
+        self._frames.append(processed)
+        
+        if len(self._frames) > self.config.n_frames:
+            self._frames.pop(0)
+        
+        return self._stack_frames(), reward, terminated, truncated, info
+    
+    @property
+    def action_space(self):
+        return self.env.action_space
+    
+    @property
+    def n_frames(self) -> int:
+        return self.config.n_frames
+    
+    @property
+    def base_obs_dim(self) -> int:
+        return self._base_obs_dim
+    
+    @property
+    def frame_dim(self) -> int:
+        return self._base_obs_dim * (2 if self.config.include_delta else 1)
+    
+    def __getattr__(self, name):
+        return getattr(self.env, name)
+
+
+@dataclass
+class AsymmetricObsConfig:
+    include_wind: bool = True
+    include_motor_forces: bool = True
+    include_true_state: bool = True
+    include_payload_forces: bool = True
+
+
+class AsymmetricObsWrapper:
+    def __init__(
+        self,
+        env,
+        config: Optional[AsymmetricObsConfig] = None
+    ):
+        self.env = env
+        self.config = config or AsymmetricObsConfig()
+        
+        self._actor_obs_dim = env.observation_space.shape[0]
+        self._critic_extra_dim = self._compute_extra_dim()
+        
+        self._setup_observation_spaces()
+        
+        self._last_actor_obs = None
+        self._last_critic_obs = None
+    
+    def _compute_extra_dim(self) -> int:
+        dim = 0
+        if self.config.include_wind:
+            dim += 3
+        if self.config.include_motor_forces:
+            dim += 4
+        if self.config.include_true_state:
+            dim += 13
+        if self.config.include_payload_forces:
+            dim += 3
+        return dim
+    
+    def _setup_observation_spaces(self):
+        self.actor_observation_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=(self._actor_obs_dim,),
+            dtype=np.float32
+        )
+        
+        self.critic_observation_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=(self._actor_obs_dim + self._critic_extra_dim,),
+            dtype=np.float32
+        )
+        
+        self.observation_space = self.actor_observation_space
+    
+    def _get_privileged_obs(self) -> np.ndarray:
+        privileged = []
+        
+        if self.config.include_wind and hasattr(self.env, '_drone'):
+            try:
+                wind = self.env._drone.get_wind_velocity()
+                privileged.extend([wind.x, wind.y, wind.z])
+            except:
+                privileged.extend([0.0, 0.0, 0.0])
+        
+        if self.config.include_motor_forces and hasattr(self.env, '_current_rpm'):
+            rpm = self.env._current_rpm if hasattr(self.env, '_current_rpm') else np.zeros(4)
+            normalized_rpm = rpm / 6000.0
+            privileged.extend(normalized_rpm.tolist())
+        
+        if self.config.include_true_state and hasattr(self.env, '_drone'):
+            state = self.env._drone.get_state()
+            privileged.extend([
+                state.position.x / 5.0,
+                state.position.y / 5.0,
+                state.position.z / 5.0,
+                state.velocity.x / 5.0,
+                state.velocity.y / 5.0,
+                state.velocity.z / 5.0,
+                state.orientation.w,
+                state.orientation.x,
+                state.orientation.y,
+                state.orientation.z,
+                state.angular_velocity.x / 10.0,
+                state.angular_velocity.y / 10.0,
+                state.angular_velocity.z / 10.0,
+            ])
+        
+        if self.config.include_payload_forces and hasattr(self.env, '_payload') and self.env._payload is not None:
+            try:
+                forces = self.env._payload.get_coupling_forces()
+                privileged.extend([
+                    forces.cable_force.x / 10.0,
+                    forces.cable_force.y / 10.0,
+                    forces.cable_force.z / 10.0,
+                ])
+            except:
+                privileged.extend([0.0, 0.0, 0.0])
+        
+        return np.array(privileged, dtype=np.float32)
+    
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        
+        self._last_actor_obs = obs.astype(np.float32)
+        privileged = self._get_privileged_obs()
+        self._last_critic_obs = np.concatenate([obs, privileged]).astype(np.float32)
+        
+        info['critic_obs'] = self._last_critic_obs
+        
+        return self._last_actor_obs, info
+    
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        
+        self._last_actor_obs = obs.astype(np.float32)
+        privileged = self._get_privileged_obs()
+        self._last_critic_obs = np.concatenate([obs, privileged]).astype(np.float32)
+        
+        info['critic_obs'] = self._last_critic_obs
+        
+        return self._last_actor_obs, reward, terminated, truncated, info
+    
+    def get_actor_obs(self) -> np.ndarray:
+        return self._last_actor_obs
+    
+    def get_critic_obs(self) -> np.ndarray:
+        return self._last_critic_obs
+    
+    @property
+    def action_space(self):
+        return self.env.action_space
+    
+    @property
+    def actor_obs_dim(self) -> int:
+        return self._actor_obs_dim
+    
+    @property
+    def critic_obs_dim(self) -> int:
+        return self._actor_obs_dim + self._critic_extra_dim
+    
+    def __getattr__(self, name):
+        return getattr(self.env, name)

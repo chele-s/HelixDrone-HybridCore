@@ -209,14 +209,10 @@ void SOTAActuatorModel::step(const double* commandedRpm, double dt, double volta
 
 void SOTAActuatorModel::stepNormalized(const double* normalizedAction, double dt, double voltage, double* outputRpm) noexcept {
     double commandedRpm[4];
-    double rpmRange = config_.maxRpm - config_.hoverRpm;
+    double rpmRange = config_.rpmRange;
     for (int i = 0; i < 4; ++i) {
         double action = std::clamp(normalizedAction[i], -1.0, 1.0);
-        if (action >= 0) {
-            commandedRpm[i] = config_.hoverRpm + action * rpmRange * 0.6;
-        } else {
-            commandedRpm[i] = config_.hoverRpm + action * (config_.hoverRpm - config_.minRpm);
-        }
+        commandedRpm[i] = config_.hoverRpm + action * rpmRange;
         commandedRpm[i] = std::clamp(commandedRpm[i], config_.minRpm, config_.maxRpm);
     }
     step(commandedRpm, dt, voltage, outputRpm);

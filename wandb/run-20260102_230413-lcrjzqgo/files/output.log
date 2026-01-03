@@ -1,0 +1,700 @@
+============================================================
+HelixDrone TD3 Training
+============================================================
+Device: cuda
+State dim: 23, Action dim: 4
+Agent: TD3
+Buffer: Uniform
+Observation Normalization: Enabled
+Exploration: warmup=500000, start=0.25
+Total timesteps: 5,000,000
+============================================================
+[WARMUP] Collecting observations to initialize normalizer...
+[WARMUP] Normalizer initialized with 2040 observations
+[WARMUP] Mean range: [-0.152, 0.997]
+[WARMUP] Var range: [0.000, 0.309]
+Steps:    1000 | Episodes:    15 | Reward:    56.41 | Length:   54.2 | Noise: 0.250 | FPS: 466
+Steps:    2000 | Episodes:    30 | Reward:    55.86 | Length:   59.2 | Noise: 0.249 | FPS: 735
+Steps:    3000 | Episodes:    46 | Reward:    56.77 | Length:   62.8 | Noise: 0.249 | FPS: 874
+Steps:    4000 | Episodes:    64 | Reward:    59.43 | Length:   60.9 | Noise: 0.248 | FPS: 985
+Steps:    5000 | Episodes:    80 | Reward:    56.23 | Length:   61.1 | Noise: 0.248 | FPS: 1055
+Steps:    6000 | Episodes:    97 | Reward:    54.80 | Length:   59.8 | Noise: 0.248 | FPS: 1135
+Steps:    7000 | Episodes:   112 | Reward:    53.19 | Length:   62.2 | Noise: 0.247 | FPS: 1235
+Steps:    8000 | Episodes:   132 | Reward:    50.69 | Length:   60.0 | Noise: 0.247 | FPS: 1302
+Steps:    9000 | Episodes:   150 | Reward:    51.82 | Length:   58.0 | Noise: 0.246 | FPS: 1339
+Steps:   10000 | Episodes:   167 | Reward:    50.10 | Length:   58.6 | Noise: 0.246 | FPS: 1375
+[EVAL] Steps: 10000 | Mean Reward: 193.20
+Steps:   11000 | Episodes:   186 | Reward:    52.08 | Length:   57.0 | Noise: 0.246 | FPS: 1085
+Steps:   12000 | Episodes:   203 | Reward:    51.83 | Length:   56.8 | Noise: 0.245 | FPS: 1146
+Steps:   13000 | Episodes:   222 | Reward:    54.34 | Length:   54.8 | Noise: 0.245 | FPS: 1193
+Steps:   14000 | Episodes:   241 | Reward:    55.46 | Length:   54.5 | Noise: 0.244 | FPS: 1237
+Steps:   15000 | Episodes:   259 | Reward:    53.98 | Length:   55.4 | Noise: 0.244 | FPS: 1282
+Steps:   16000 | Episodes:   276 | Reward:    54.80 | Length:   55.6 | Noise: 0.244 | FPS: 1312
+Steps:   17000 | Episodes:   291 | Reward:    55.60 | Length:   56.7 | Noise: 0.243 | FPS: 1342
+Steps:   18000 | Episodes:   310 | Reward:    59.75 | Length:   56.6 | Noise: 0.243 | FPS: 1382
+Steps:   19000 | Episodes:   329 | Reward:    61.93 | Length:   56.9 | Noise: 0.242 | FPS: 1422
+Steps:   20000 | Episodes:   346 | Reward:    59.31 | Length:   57.4 | Noise: 0.242 | FPS: 1466
+[EVAL] Steps: 20000 | Mean Reward: 195.16
+Steps:   21000 | Episodes:   361 | Reward:    60.76 | Length:   58.7 | Noise: 0.242 | FPS: 1369
+Steps:   22000 | Episodes:   378 | Reward:    60.41 | Length:   58.4 | Noise: 0.241 | FPS: 1410
+Steps:   23000 | Episodes:   395 | Reward:    58.85 | Length:   59.1 | Noise: 0.241 | FPS: 1450
+Steps:   24000 | Episodes:   413 | Reward:    57.44 | Length:   58.4 | Noise: 0.240 | FPS: 1486
+Steps:   25000 | Episodes:   430 | Reward:    55.29 | Length:   59.6 | Noise: 0.240 | FPS: 1500
+Steps:   26000 | Episodes:   485 | Reward:    25.24 | Length:   36.4 | Noise: 0.240 | FPS: 1079
+Steps:   27000 | Episodes:   547 | Reward:    -4.11 | Length:   16.8 | Noise: 0.239 | FPS: 854
+Steps:   28000 | Episodes:   603 | Reward:    -3.19 | Length:   17.1 | Noise: 0.239 | FPS: 676
+Steps:   29000 | Episodes:   661 | Reward:    -2.72 | Length:   17.5 | Noise: 0.238 | FPS: 597
+Steps:   30000 | Episodes:   718 | Reward:    -4.76 | Length:   17.5 | Noise: 0.238 | FPS: 535
+[EVAL] Steps: 30000 | Mean Reward: -5.55
+Steps:   31000 | Episodes:   775 | Reward:    -3.34 | Length:   17.6 | Noise: 0.238 | FPS: 488
+Steps:   32000 | Episodes:   831 | Reward:    -1.63 | Length:   17.7 | Noise: 0.237 | FPS: 453
+Steps:   33000 | Episodes:   888 | Reward:    -3.09 | Length:   17.6 | Noise: 0.237 | FPS: 420
+Steps:   34000 | Episodes:   945 | Reward:    -3.16 | Length:   17.6 | Noise: 0.236 | FPS: 389
+Steps:   35000 | Episodes:  1002 | Reward:    -1.69 | Length:   17.7 | Noise: 0.236 | FPS: 368
+Steps:   36000 | Episodes:  1058 | Reward:    -3.07 | Length:   17.6 | Noise: 0.236 | FPS: 350
+Steps:   37000 | Episodes:  1114 | Reward:    -2.69 | Length:   17.7 | Noise: 0.235 | FPS: 335
+Steps:   38000 | Episodes:  1171 | Reward:    -2.94 | Length:   17.6 | Noise: 0.235 | FPS: 323
+Steps:   39000 | Episodes:  1227 | Reward:    -3.78 | Length:   17.6 | Noise: 0.234 | FPS: 313
+Steps:   40000 | Episodes:  1279 | Reward:    -1.85 | Length:   18.1 | Noise: 0.234 | FPS: 303
+[EVAL] Steps: 40000 | Mean Reward: 28.40
+Steps:   41000 | Episodes:  1311 | Reward:     7.70 | Length:   22.7 | Noise: 0.234 | FPS: 294
+Steps:   42000 | Episodes:  1332 | Reward:    13.67 | Length:   28.3 | Noise: 0.233 | FPS: 287
+Steps:   43000 | Episodes:  1353 | Reward:    21.23 | Length:   34.6 | Noise: 0.233 | FPS: 280
+Steps:   44000 | Episodes:  1375 | Reward:    25.95 | Length:   40.2 | Noise: 0.232 | FPS: 274
+Steps:   45000 | Episodes:  1397 | Reward:    26.89 | Length:   44.2 | Noise: 0.232 | FPS: 269
+Steps:   46000 | Episodes:  1417 | Reward:    29.68 | Length:   46.6 | Noise: 0.232 | FPS: 264
+Steps:   47000 | Episodes:  1436 | Reward:    29.94 | Length:   48.2 | Noise: 0.231 | FPS: 259
+Steps:   48000 | Episodes:  1454 | Reward:    29.11 | Length:   49.4 | Noise: 0.231 | FPS: 254
+Steps:   49000 | Episodes:  1471 | Reward:    29.65 | Length:   51.6 | Noise: 0.230 | FPS: 250
+Steps:   50000 | Episodes:  1487 | Reward:    36.85 | Length:   55.0 | Noise: 0.230 | FPS: 246
+
+======================================================================
+[DETAILED METRICS @ Step 50000]
+----------------------------------------------------------------------
+  Episodes:   Short(<50):  46 (46%)  |  Medium(50-200):  54  |  Long(>200):   0 (0%)
+  Length:     Avg: 55.0  |  Max: 143
+  Reward:     Min: -45.1  |  Max: 111.8  |  Avg: 36.9
+  Exploration: Noise=0.230
+  ADR:        Difficulty: 0.00  |  Stage: 0
+======================================================================
+
+
+================================================================================
+[DIAGNOSTIC @ Step 50000] WHY IS THE DRONE FAILING?
+================================================================================
+
+[CRASH REASONS]
+  angle       : 1469 ( 98.8%) #################################################
+  ground      :    9 (  0.6%)
+  distance    :    9 (  0.6%)
+  velocity    :    0 (  0.0%)
+  truncated   :    0 (  0.0%)
+  unknown     :    0 (  0.0%)
+
+  >>> MAIN PROBLEM: ANGLE (1469 crashes, 98.8%)
+
+[AVERAGE PHYSICS STATE]
+  Avg RPM: 3089 (hover_rpm: 2700.0)
+  Avg Speed: 1.12 m/s
+  Avg Total Angle: 15.3 degrees
+  Avg Action: +0.166 (0=hover, -1=min, +1=max)
+
+[LAST CRASH DETAILS]
+  Reason: angle
+  RPM: 3908
+  Speed: 2.86 m/s
+  Roll: -29.5°, Pitch: -16.8°
+  Distance to target: 0.83 m
+  Battery voltage: 16.80 V
+  >>> DIAGNOSIS: Drone is flipping! Check hover_rpm or control authority
+
+[Q-VALUE ANALYSIS]
+  Q(action=-0.3) = +35.78
+  Q(action= 0.0) = +35.50
+  Q(action=+0.3) = +35.17
+  Actor output: -0.016
+  >>> BUG: Critic values NEGATIVE actions 0.6 higher than positive!
+
+[LOSS TREND]
+  Critic loss (recent): 8.29
+  Critic loss change: +0.29
+================================================================================
+
+[EVAL] Steps: 50000 | Mean Reward: 69.40
+Steps:   51000 | Episodes:  1500 | Reward:    38.39 | Length:   57.3 | Noise: 0.230 | FPS: 241
+Steps:   52000 | Episodes:  1515 | Reward:    37.64 | Length:   60.9 | Noise: 0.229 | FPS: 238
+Steps:   53000 | Episodes:  1532 | Reward:    40.87 | Length:   61.7 | Noise: 0.229 | FPS: 235
+Steps:   54000 | Episodes:  1547 | Reward:    45.27 | Length:   63.6 | Noise: 0.228 | FPS: 232
+Steps:   55000 | Episodes:  1561 | Reward:    47.59 | Length:   66.0 | Noise: 0.228 | FPS: 229
+Steps:   56000 | Episodes:  1574 | Reward:    49.94 | Length:   67.4 | Noise: 0.228 | FPS: 225
+Steps:   57000 | Episodes:  1590 | Reward:    49.56 | Length:   67.8 | Noise: 0.227 | FPS: 221
+Steps:   58000 | Episodes:  1603 | Reward:    48.85 | Length:   68.3 | Noise: 0.227 | FPS: 218
+Steps:   59000 | Episodes:  1618 | Reward:    50.44 | Length:   67.3 | Noise: 0.226 | FPS: 215
+Steps:   60000 | Episodes:  1635 | Reward:    50.76 | Length:   67.6 | Noise: 0.226 | FPS: 213
+[EVAL] Steps: 60000 | Mean Reward: 62.14
+Steps:   61000 | Episodes:  1651 | Reward:    50.13 | Length:   67.7 | Noise: 0.226 | FPS: 207
+Steps:   62000 | Episodes:  1665 | Reward:    47.94 | Length:   67.2 | Noise: 0.225 | FPS: 204
+Steps:   63000 | Episodes:  1680 | Reward:    45.35 | Length:   67.4 | Noise: 0.225 | FPS: 201
+Steps:   64000 | Episodes:  1691 | Reward:    41.69 | Length:   68.6 | Noise: 0.224 | FPS: 199
+Steps:   65000 | Episodes:  1704 | Reward:    39.15 | Length:   69.1 | Noise: 0.224 | FPS: 197
+Steps:   66000 | Episodes:  1716 | Reward:    37.34 | Length:   71.8 | Noise: 0.224 | FPS: 194
+Steps:   67000 | Episodes:  1729 | Reward:    40.63 | Length:   73.7 | Noise: 0.223 | FPS: 191
+Steps:   68000 | Episodes:  1740 | Reward:    39.98 | Length:   77.9 | Noise: 0.223 | FPS: 189
+Steps:   69000 | Episodes:  1750 | Reward:    41.06 | Length:   79.1 | Noise: 0.222 | FPS: 187
+Steps:   70000 | Episodes:  1760 | Reward:    42.46 | Length:   82.7 | Noise: 0.222 | FPS: 185
+[EVAL] Steps: 70000 | Mean Reward: 53.94
+Steps:   71000 | Episodes:  1771 | Reward:    45.61 | Length:   85.2 | Noise: 0.222 | FPS: 183
+Steps:   72000 | Episodes:  1781 | Reward:    47.89 | Length:   88.2 | Noise: 0.221 | FPS: 181
+Steps:   73000 | Episodes:  1792 | Reward:    49.69 | Length:   89.8 | Noise: 0.221 | FPS: 179
+Steps:   74000 | Episodes:  1801 | Reward:    52.31 | Length:   91.7 | Noise: 0.220 | FPS: 178
+Steps:   75000 | Episodes:  1812 | Reward:    53.99 | Length:   94.0 | Noise: 0.220 | FPS: 177
+Steps:   76000 | Episodes:  1823 | Reward:    54.62 | Length:   94.6 | Noise: 0.220 | FPS: 176
+Steps:   77000 | Episodes:  1833 | Reward:    53.44 | Length:   95.8 | Noise: 0.219 | FPS: 175
+Steps:   78000 | Episodes:  1843 | Reward:    52.58 | Length:   96.3 | Noise: 0.219 | FPS: 173
+Steps:   79000 | Episodes:  1854 | Reward:    51.38 | Length:   96.5 | Noise: 0.218 | FPS: 172
+Steps:   80000 | Episodes:  1864 | Reward:    47.70 | Length:   96.8 | Noise: 0.218 | FPS: 170
+[EVAL] Steps: 80000 | Mean Reward: 55.34
+Steps:   81000 | Episodes:  1875 | Reward:    47.05 | Length:   96.7 | Noise: 0.218 | FPS: 169
+Steps:   82000 | Episodes:  1884 | Reward:    45.94 | Length:   96.7 | Noise: 0.217 | FPS: 168
+Steps:   83000 | Episodes:  1895 | Reward:    45.64 | Length:   96.8 | Noise: 0.217 | FPS: 167
+Steps:   84000 | Episodes:  1904 | Reward:    44.78 | Length:   97.4 | Noise: 0.216 | FPS: 167
+Steps:   85000 | Episodes:  1915 | Reward:    44.74 | Length:   97.2 | Noise: 0.216 | FPS: 166
+Steps:   86000 | Episodes:  1924 | Reward:    45.25 | Length:   98.9 | Noise: 0.216 | FPS: 165
+Steps:   87000 | Episodes:  1932 | Reward:    44.72 | Length:  100.4 | Noise: 0.215 | FPS: 164
+Steps:   88000 | Episodes:  1943 | Reward:    44.35 | Length:  100.8 | Noise: 0.215 | FPS: 163
+Steps:   89000 | Episodes:  1953 | Reward:    46.19 | Length:  101.7 | Noise: 0.214 | FPS: 162
+Steps:   90000 | Episodes:  1966 | Reward:    51.86 | Length:   99.5 | Noise: 0.214 | FPS: 161
+[EVAL] Steps: 90000 | Mean Reward: 56.87
+Steps:   91000 | Episodes:  1977 | Reward:    53.23 | Length:   97.3 | Noise: 0.214 | FPS: 160
+Steps:   92000 | Episodes:  1988 | Reward:    51.16 | Length:   96.5 | Noise: 0.213 | FPS: 159
+Steps:   93000 | Episodes:  1997 | Reward:    52.94 | Length:   96.8 | Noise: 0.213 | FPS: 159
+Steps:   94000 | Episodes:  2008 | Reward:    54.10 | Length:   96.1 | Noise: 0.212 | FPS: 158
+Steps:   95000 | Episodes:  2020 | Reward:    54.30 | Length:   94.2 | Noise: 0.212 | FPS: 157
+Steps:   96000 | Episodes:  2031 | Reward:    51.91 | Length:   91.4 | Noise: 0.212 | FPS: 156
+Steps:   97000 | Episodes:  2041 | Reward:    52.80 | Length:   91.9 | Noise: 0.211 | FPS: 156
+Steps:   98000 | Episodes:  2051 | Reward:    54.83 | Length:   91.7 | Noise: 0.211 | FPS: 156
+Steps:   99000 | Episodes:  2062 | Reward:    53.72 | Length:   92.3 | Noise: 0.210 | FPS: 155
+Steps:  100000 | Episodes:  2071 | Reward:    49.81 | Length:   94.6 | Noise: 0.210 | FPS: 155
+
+======================================================================
+[DETAILED METRICS @ Step 100000]
+----------------------------------------------------------------------
+  Episodes:   Short(<50):   0 (0%)  |  Medium(50-200): 100  |  Long(>200):   0 (0%)
+  Length:     Avg: 94.6  |  Max: 155
+  Reward:     Min: -42.8  |  Max: 149.2  |  Avg: 49.8
+  Exploration: Noise=0.210
+  ADR:        Difficulty: 0.00  |  Stage: 0
+======================================================================
+
+
+================================================================================
+[DIAGNOSTIC @ Step 100000] WHY IS THE DRONE FAILING?
+================================================================================
+
+[CRASH REASONS]
+  angle       :  578 ( 99.0%) #################################################
+  distance    :    6 (  1.0%)
+  ground      :    0 (  0.0%)
+  velocity    :    0 (  0.0%)
+  truncated   :    0 (  0.0%)
+  unknown     :    0 (  0.0%)
+
+  >>> MAIN PROBLEM: ANGLE (578 crashes, 99.0%)
+
+[AVERAGE PHYSICS STATE]
+  Avg RPM: 2886 (hover_rpm: 2700.0)
+  Avg Speed: 1.35 m/s
+  Avg Total Angle: 13.4 degrees
+  Avg Action: +0.109 (0=hover, -1=min, +1=max)
+
+[LAST CRASH DETAILS]
+  Reason: angle
+  RPM: 1970
+  Speed: 2.88 m/s
+  Roll: 31.2°, Pitch: -9.0°
+  Distance to target: 1.30 m
+  Battery voltage: 16.80 V
+  >>> DIAGNOSIS: Drone is flipping! Check hover_rpm or control authority
+
+[Q-VALUE ANALYSIS]
+  Q(action=-0.3) = +0.48
+  Q(action= 0.0) = -5.47
+  Q(action=+0.3) = -11.17
+  Actor output: -0.371
+  >>> BUG: Critic values NEGATIVE actions 11.6 higher than positive!
+
+[LOSS TREND]
+  Critic loss (recent): 28.37
+  Critic loss change: +0.80
+================================================================================
+
+[EVAL] Steps: 100000 | Mean Reward: 106.77
+Steps:  101000 | Episodes:  2082 | Reward:    51.18 | Length:   94.9 | Noise: 0.210 | FPS: 154
+Steps:  102000 | Episodes:  2095 | Reward:    51.89 | Length:   93.7 | Noise: 0.209 | FPS: 154
+Steps:  103000 | Episodes:  2106 | Reward:    53.48 | Length:   92.3 | Noise: 0.209 | FPS: 153
+Steps:  104000 | Episodes:  2116 | Reward:    53.49 | Length:   92.5 | Noise: 0.208 | FPS: 153
+Steps:  105000 | Episodes:  2126 | Reward:    59.75 | Length:   93.9 | Noise: 0.208 | FPS: 153
+Steps:  106000 | Episodes:  2137 | Reward:    62.33 | Length:   95.0 | Noise: 0.208 | FPS: 152
+Steps:  107000 | Episodes:  2146 | Reward:    61.12 | Length:   94.5 | Noise: 0.207 | FPS: 152
+Steps:  108000 | Episodes:  2156 | Reward:    61.91 | Length:   95.9 | Noise: 0.207 | FPS: 151
+Steps:  109000 | Episodes:  2166 | Reward:    63.07 | Length:   96.0 | Noise: 0.206 | FPS: 151
+Steps:  110000 | Episodes:  2176 | Reward:    67.00 | Length:   96.7 | Noise: 0.206 | FPS: 150
+[EVAL] Steps: 110000 | Mean Reward: 84.59
+Steps:  111000 | Episodes:  2186 | Reward:    65.59 | Length:   97.5 | Noise: 0.206 | FPS: 149
+Steps:  112000 | Episodes:  2198 | Reward:    65.09 | Length:   97.4 | Noise: 0.205 | FPS: 149
+Steps:  113000 | Episodes:  2207 | Reward:    65.07 | Length:   97.2 | Noise: 0.205 | FPS: 148
+Steps:  114000 | Episodes:  2216 | Reward:    68.23 | Length:   99.2 | Noise: 0.204 | FPS: 148
+Steps:  115000 | Episodes:  2227 | Reward:    65.72 | Length:   98.8 | Noise: 0.204 | FPS: 147
+Steps:  116000 | Episodes:  2239 | Reward:    64.79 | Length:   98.4 | Noise: 0.204 | FPS: 147
+Steps:  117000 | Episodes:  2250 | Reward:    60.16 | Length:   97.1 | Noise: 0.203 | FPS: 147
+Steps:  118000 | Episodes:  2262 | Reward:    56.94 | Length:   94.8 | Noise: 0.203 | FPS: 147
+Steps:  119000 | Episodes:  2274 | Reward:    54.17 | Length:   91.7 | Noise: 0.202 | FPS: 147
+Steps:  120000 | Episodes:  2287 | Reward:    52.94 | Length:   88.0 | Noise: 0.202 | FPS: 146
+[EVAL] Steps: 120000 | Mean Reward: 96.77
+Steps:  121000 | Episodes:  2300 | Reward:    50.30 | Length:   87.3 | Noise: 0.202 | FPS: 146
+Steps:  122000 | Episodes:  2313 | Reward:    47.54 | Length:   84.8 | Noise: 0.201 | FPS: 146
+Steps:  123000 | Episodes:  2324 | Reward:    44.59 | Length:   82.8 | Noise: 0.201 | FPS: 145
+Steps:  124000 | Episodes:  2335 | Reward:    46.60 | Length:   82.6 | Noise: 0.200 | FPS: 145
+Steps:  125000 | Episodes:  2347 | Reward:    49.10 | Length:   81.4 | Noise: 0.200 | FPS: 145
+Steps:  126000 | Episodes:  2359 | Reward:    54.09 | Length:   83.0 | Noise: 0.200 | FPS: 145
+Steps:  127000 | Episodes:  2372 | Reward:    54.12 | Length:   82.4 | Noise: 0.199 | FPS: 145
+Steps:  128000 | Episodes:  2385 | Reward:    54.93 | Length:   81.6 | Noise: 0.199 | FPS: 144
+Steps:  129000 | Episodes:  2399 | Reward:    53.80 | Length:   81.1 | Noise: 0.198 | FPS: 144
+Steps:  130000 | Episodes:  2414 | Reward:    56.70 | Length:   79.6 | Noise: 0.198 | FPS: 144
+[EVAL] Steps: 130000 | Mean Reward: 63.03
+Steps:  131000 | Episodes:  2426 | Reward:    57.15 | Length:   77.5 | Noise: 0.198 | FPS: 143
+Steps:  132000 | Episodes:  2439 | Reward:    57.75 | Length:   77.6 | Noise: 0.197 | FPS: 143
+Steps:  133000 | Episodes:  2450 | Reward:    54.41 | Length:   77.4 | Noise: 0.197 | FPS: 143
+Steps:  134000 | Episodes:  2461 | Reward:    56.13 | Length:   77.5 | Noise: 0.196 | FPS: 143
+Steps:  135000 | Episodes:  2472 | Reward:    59.02 | Length:   79.3 | Noise: 0.196 | FPS: 142
+Steps:  136000 | Episodes:  2485 | Reward:    61.92 | Length:   80.4 | Noise: 0.196 | FPS: 142
+Steps:  137000 | Episodes:  2496 | Reward:    63.95 | Length:   81.3 | Noise: 0.195 | FPS: 142
+Steps:  138000 | Episodes:  2508 | Reward:    66.01 | Length:   82.6 | Noise: 0.195 | FPS: 142
+Steps:  139000 | Episodes:  2520 | Reward:    69.15 | Length:   85.9 | Noise: 0.194 | FPS: 142
+Steps:  140000 | Episodes:  2532 | Reward:    69.16 | Length:   85.3 | Noise: 0.194 | FPS: 141
+[EVAL] Steps: 140000 | Mean Reward: 100.65
+Steps:  141000 | Episodes:  2545 | Reward:    70.01 | Length:   85.0 | Noise: 0.194 | FPS: 141
+Steps:  142000 | Episodes:  2558 | Reward:    71.51 | Length:   83.7 | Noise: 0.193 | FPS: 141
+Steps:  143000 | Episodes:  2569 | Reward:    70.85 | Length:   83.8 | Noise: 0.193 | FPS: 141
+Steps:  144000 | Episodes:  2581 | Reward:    69.28 | Length:   83.4 | Noise: 0.192 | FPS: 140
+Steps:  145000 | Episodes:  2592 | Reward:    70.89 | Length:   83.6 | Noise: 0.192 | FPS: 140
+Steps:  146000 | Episodes:  2607 | Reward:    70.38 | Length:   82.2 | Noise: 0.192 | FPS: 140
+Steps:  147000 | Episodes:  2619 | Reward:    69.39 | Length:   81.7 | Noise: 0.191 | FPS: 140
+Steps:  148000 | Episodes:  2627 | Reward:    71.24 | Length:   83.3 | Noise: 0.191 | FPS: 140
+Steps:  149000 | Episodes:  2638 | Reward:    75.02 | Length:   84.3 | Noise: 0.190 | FPS: 140
+Steps:  150000 | Episodes:  2648 | Reward:    77.25 | Length:   86.3 | Noise: 0.190 | FPS: 140
+
+======================================================================
+[DETAILED METRICS @ Step 150000]
+----------------------------------------------------------------------
+  Episodes:   Short(<50):  11 (11%)  |  Medium(50-200):  89  |  Long(>200):   0 (0%)
+  Length:     Avg: 86.3  |  Max: 144
+  Reward:     Min: -15.8  |  Max: 194.3  |  Avg: 77.2
+  Exploration: Noise=0.190
+  ADR:        Difficulty: 0.00  |  Stage: 0
+======================================================================
+
+
+================================================================================
+[DIAGNOSTIC @ Step 150000] WHY IS THE DRONE FAILING?
+================================================================================
+
+[CRASH REASONS]
+  angle       :  576 ( 99.8%) #################################################
+  ground      :    1 (  0.2%)
+  distance    :    0 (  0.0%)
+  velocity    :    0 (  0.0%)
+  truncated   :    0 (  0.0%)
+  unknown     :    0 (  0.0%)
+
+  >>> MAIN PROBLEM: ANGLE (576 crashes, 99.8%)
+
+[AVERAGE PHYSICS STATE]
+  Avg RPM: 2787 (hover_rpm: 2700.0)
+  Avg Speed: 1.08 m/s
+  Avg Total Angle: 11.9 degrees
+  Avg Action: +0.105 (0=hover, -1=min, +1=max)
+
+[LAST CRASH DETAILS]
+  Reason: angle
+  RPM: 2693
+  Speed: 1.99 m/s
+  Roll: -19.1°, Pitch: -28.8°
+  Distance to target: 0.96 m
+  Battery voltage: 16.80 V
+  >>> DIAGNOSIS: Drone is flipping! Check hover_rpm or control authority
+
+[Q-VALUE ANALYSIS]
+  Q(action=-0.3) = +2.99
+  Q(action= 0.0) = +10.47
+  Q(action=+0.3) = +10.88
+  Actor output: -0.029
+  >>> GOOD: Critic values POSITIVE actions 7.9 higher!
+
+[LOSS TREND]
+  Critic loss (recent): 44.67
+  Critic loss change: -0.18
+================================================================================
+
+[EVAL] Steps: 150000 | Mean Reward: 165.00
+Steps:  151000 | Episodes:  2660 | Reward:    78.38 | Length:   87.8 | Noise: 0.190 | FPS: 139
+Steps:  152000 | Episodes:  2672 | Reward:    77.35 | Length:   87.0 | Noise: 0.189 | FPS: 139
+Steps:  153000 | Episodes:  2681 | Reward:    79.81 | Length:   88.0 | Noise: 0.189 | FPS: 139
+Steps:  154000 | Episodes:  2692 | Reward:    83.45 | Length:   90.2 | Noise: 0.188 | FPS: 139
+Steps:  155000 | Episodes:  2702 | Reward:    84.56 | Length:   91.9 | Noise: 0.188 | FPS: 139
+Steps:  156000 | Episodes:  2712 | Reward:    86.46 | Length:   94.8 | Noise: 0.188 | FPS: 139
+Steps:  157000 | Episodes:  2724 | Reward:    89.22 | Length:   94.4 | Noise: 0.187 | FPS: 139
+Steps:  158000 | Episodes:  2733 | Reward:    86.80 | Length:   94.7 | Noise: 0.187 | FPS: 139
+Steps:  159000 | Episodes:  2742 | Reward:    87.55 | Length:   95.1 | Noise: 0.186 | FPS: 139
+Steps:  160000 | Episodes:  2756 | Reward:    88.61 | Length:   93.7 | Noise: 0.186 | FPS: 139
+[EVAL] Steps: 160000 | Mean Reward: 122.86
+Steps:  161000 | Episodes:  2769 | Reward:    86.79 | Length:   92.2 | Noise: 0.186 | FPS: 138
+Steps:  162000 | Episodes:  2781 | Reward:    86.33 | Length:   90.8 | Noise: 0.185 | FPS: 138
+Steps:  163000 | Episodes:  2793 | Reward:    84.86 | Length:   89.5 | Noise: 0.185 | FPS: 138
+Steps:  164000 | Episodes:  2805 | Reward:    81.18 | Length:   87.5 | Noise: 0.184 | FPS: 138
+Steps:  165000 | Episodes:  2816 | Reward:    83.68 | Length:   85.2 | Noise: 0.184 | FPS: 138
+Steps:  166000 | Episodes:  2827 | Reward:    84.64 | Length:   85.9 | Noise: 0.184 | FPS: 138
+Steps:  167000 | Episodes:  2838 | Reward:    85.59 | Length:   84.5 | Noise: 0.183 | FPS: 138
+Steps:  168000 | Episodes:  2850 | Reward:    85.19 | Length:   85.3 | Noise: 0.183 | FPS: 138
+Steps:  169000 | Episodes:  2860 | Reward:    85.74 | Length:   86.0 | Noise: 0.182 | FPS: 138
+Steps:  170000 | Episodes:  2872 | Reward:    87.70 | Length:   87.5 | Noise: 0.182 | FPS: 138
+[EVAL] Steps: 170000 | Mean Reward: 117.57
+Steps:  171000 | Episodes:  2883 | Reward:    88.08 | Length:   87.5 | Noise: 0.182 | FPS: 138
+Steps:  172000 | Episodes:  2897 | Reward:    87.53 | Length:   86.8 | Noise: 0.181 | FPS: 138
+Steps:  173000 | Episodes:  2908 | Reward:    84.46 | Length:   86.6 | Noise: 0.181 | FPS: 138
+Steps:  174000 | Episodes:  2921 | Reward:    84.87 | Length:   86.1 | Noise: 0.180 | FPS: 138
+Steps:  175000 | Episodes:  2933 | Reward:    79.01 | Length:   84.7 | Noise: 0.180 | FPS: 137
+Steps:  176000 | Episodes:  2945 | Reward:    77.54 | Length:   83.3 | Noise: 0.180 | FPS: 137
+Steps:  177000 | Episodes:  2959 | Reward:    72.91 | Length:   82.1 | Noise: 0.179 | FPS: 137
+Steps:  178000 | Episodes:  2972 | Reward:    70.39 | Length:   80.2 | Noise: 0.179 | FPS: 137
+Steps:  179000 | Episodes:  2981 | Reward:    72.69 | Length:   81.1 | Noise: 0.178 | FPS: 137
+Steps:  180000 | Episodes:  2990 | Reward:    72.05 | Length:   83.1 | Noise: 0.178 | FPS: 137
+[EVAL] Steps: 180000 | Mean Reward: 110.36
+Steps:  181000 | Episodes:  3001 | Reward:    76.20 | Length:   86.6 | Noise: 0.178 | FPS: 137
+Steps:  182000 | Episodes:  3011 | Reward:    77.73 | Length:   86.7 | Noise: 0.177 | FPS: 137
+Steps:  183000 | Episodes:  3023 | Reward:    74.68 | Length:   87.5 | Noise: 0.177 | FPS: 137
+Steps:  184000 | Episodes:  3037 | Reward:    76.25 | Length:   87.7 | Noise: 0.176 | FPS: 137
+Steps:  185000 | Episodes:  3049 | Reward:    75.62 | Length:   87.6 | Noise: 0.176 | FPS: 136
+Steps:  186000 | Episodes:  3061 | Reward:    79.04 | Length:   87.5 | Noise: 0.176 | FPS: 136
+Steps:  187000 | Episodes:  3075 | Reward:    80.12 | Length:   87.3 | Noise: 0.175 | FPS: 137
+Steps:  188000 | Episodes:  3086 | Reward:    80.15 | Length:   85.7 | Noise: 0.175 | FPS: 137
+Steps:  189000 | Episodes:  3097 | Reward:    77.73 | Length:   83.2 | Noise: 0.174 | FPS: 137
+Steps:  190000 | Episodes:  3109 | Reward:    79.05 | Length:   83.1 | Noise: 0.174 | FPS: 137
+[EVAL] Steps: 190000 | Mean Reward: 96.17
+Steps:  191000 | Episodes:  3123 | Reward:    77.12 | Length:   81.4 | Noise: 0.174 | FPS: 137
+Steps:  192000 | Episodes:  3136 | Reward:    80.03 | Length:   81.3 | Noise: 0.173 | FPS: 137
+Steps:  193000 | Episodes:  3147 | Reward:    79.98 | Length:   81.5 | Noise: 0.173 | FPS: 137
+Steps:  194000 | Episodes:  3159 | Reward:    80.43 | Length:   81.5 | Noise: 0.172 | FPS: 137
+Steps:  195000 | Episodes:  3175 | Reward:    74.00 | Length:   79.8 | Noise: 0.172 | FPS: 137
+Steps:  196000 | Episodes:  3191 | Reward:    68.00 | Length:   76.1 | Noise: 0.172 | FPS: 137
+Steps:  197000 | Episodes:  3206 | Reward:    62.33 | Length:   73.1 | Noise: 0.171 | FPS: 137
+Steps:  198000 | Episodes:  3222 | Reward:    56.32 | Length:   70.1 | Noise: 0.171 | FPS: 137
+Steps:  199000 | Episodes:  3237 | Reward:    54.31 | Length:   69.7 | Noise: 0.170 | FPS: 137
+Steps:  200000 | Episodes:  3250 | Reward:    53.68 | Length:   68.5 | Noise: 0.170 | FPS: 137
+
+======================================================================
+[DETAILED METRICS @ Step 200000]
+----------------------------------------------------------------------
+  Episodes:   Short(<50):  12 (12%)  |  Medium(50-200):  88  |  Long(>200):   0 (0%)
+  Length:     Avg: 68.5  |  Max: 148
+  Reward:     Min: -12.9  |  Max: 154.8  |  Avg: 53.7
+  Exploration: Noise=0.170
+  ADR:        Difficulty: 0.00  |  Stage: 0
+======================================================================
+
+
+================================================================================
+[DIAGNOSTIC @ Step 200000] WHY IS THE DRONE FAILING?
+================================================================================
+
+[CRASH REASONS]
+  angle       :  602 (100.0%) ##################################################
+  ground      :    0 (  0.0%)
+  distance    :    0 (  0.0%)
+  velocity    :    0 (  0.0%)
+  truncated   :    0 (  0.0%)
+  unknown     :    0 (  0.0%)
+
+  >>> MAIN PROBLEM: ANGLE (602 crashes, 100.0%)
+
+[AVERAGE PHYSICS STATE]
+  Avg RPM: 2783 (hover_rpm: 2700.0)
+  Avg Speed: 0.86 m/s
+  Avg Total Angle: 12.0 degrees
+  Avg Action: +0.093 (0=hover, -1=min, +1=max)
+
+[LAST CRASH DETAILS]
+  Reason: angle
+  RPM: 3818
+  Speed: 2.26 m/s
+  Roll: 4.6°, Pitch: 30.9°
+  Distance to target: 0.76 m
+  Battery voltage: 16.80 V
+  >>> DIAGNOSIS: Drone is flipping! Check hover_rpm or control authority
+
+[Q-VALUE ANALYSIS]
+  Q(action=-0.3) = -2.94
+  Q(action= 0.0) = -3.42
+  Q(action=+0.3) = -5.38
+  Actor output: +0.462
+  >>> BUG: Critic values NEGATIVE actions 2.4 higher than positive!
+
+[LOSS TREND]
+  Critic loss (recent): 46.58
+  Critic loss change: -1.24
+================================================================================
+
+[EVAL] Steps: 200000 | Mean Reward: 83.18
+Steps:  201000 | Episodes:  3263 | Reward:    50.56 | Length:   66.5 | Noise: 0.170 | FPS: 136
+Steps:  202000 | Episodes:  3277 | Reward:    53.29 | Length:   68.5 | Noise: 0.169 | FPS: 136
+Steps:  203000 | Episodes:  3290 | Reward:    56.34 | Length:   71.2 | Noise: 0.169 | FPS: 136
+Steps:  204000 | Episodes:  3301 | Reward:    60.42 | Length:   73.8 | Noise: 0.168 | FPS: 136
+Steps:  205000 | Episodes:  3311 | Reward:    68.11 | Length:   76.5 | Noise: 0.168 | FPS: 136
+Steps:  206000 | Episodes:  3324 | Reward:    70.75 | Length:   79.3 | Noise: 0.168 | FPS: 136
+Steps:  207000 | Episodes:  3337 | Reward:    75.50 | Length:   79.5 | Noise: 0.167 | FPS: 136
+Steps:  208000 | Episodes:  3349 | Reward:    76.70 | Length:   80.1 | Noise: 0.167 | FPS: 136
+Steps:  209000 | Episodes:  3362 | Reward:    80.75 | Length:   81.0 | Noise: 0.166 | FPS: 136
+Steps:  210000 | Episodes:  3374 | Reward:    83.53 | Length:   81.9 | Noise: 0.166 | FPS: 136
+[EVAL] Steps: 210000 | Mean Reward: 73.50
+Steps:  211000 | Episodes:  3383 | Reward:    89.41 | Length:   84.5 | Noise: 0.166 | FPS: 136
+Steps:  212000 | Episodes:  3394 | Reward:    94.77 | Length:   86.1 | Noise: 0.165 | FPS: 136
+Steps:  213000 | Episodes:  3405 | Reward:    95.00 | Length:   85.0 | Noise: 0.165 | FPS: 136
+Steps:  214000 | Episodes:  3417 | Reward:    94.69 | Length:   85.0 | Noise: 0.164 | FPS: 136
+Steps:  215000 | Episodes:  3431 | Reward:    93.50 | Length:   84.9 | Noise: 0.164 | FPS: 136
+Steps:  216000 | Episodes:  3444 | Reward:    90.57 | Length:   84.3 | Noise: 0.164 | FPS: 136
+Steps:  217000 | Episodes:  3456 | Reward:    88.81 | Length:   84.1 | Noise: 0.163 | FPS: 136
+Steps:  218000 | Episodes:  3470 | Reward:    89.52 | Length:   83.6 | Noise: 0.163 | FPS: 136
+Steps:  219000 | Episodes:  3485 | Reward:    81.81 | Length:   79.8 | Noise: 0.162 | FPS: 136
+Steps:  220000 | Episodes:  3495 | Reward:    78.57 | Length:   78.3 | Noise: 0.162 | FPS: 136
+[EVAL] Steps: 220000 | Mean Reward: 77.32
+Steps:  221000 | Episodes:  3508 | Reward:    75.25 | Length:   78.2 | Noise: 0.162 | FPS: 136
+Steps:  222000 | Episodes:  3518 | Reward:    76.54 | Length:   79.8 | Noise: 0.161 | FPS: 136
+Steps:  223000 | Episodes:  3528 | Reward:    78.08 | Length:   80.3 | Noise: 0.161 | FPS: 136
+Steps:  224000 | Episodes:  3539 | Reward:    82.82 | Length:   83.3 | Noise: 0.160 | FPS: 136
+Steps:  225000 | Episodes:  3549 | Reward:    87.98 | Length:   85.9 | Noise: 0.160 | FPS: 136
+Steps:  226000 | Episodes:  3563 | Reward:    87.51 | Length:   85.9 | Noise: 0.160 | FPS: 136
+Steps:  227000 | Episodes:  3573 | Reward:    88.69 | Length:   87.3 | Noise: 0.159 | FPS: 136
+Steps:  228000 | Episodes:  3585 | Reward:    90.78 | Length:   90.1 | Noise: 0.159 | FPS: 136
+Steps:  229000 | Episodes:  3594 | Reward:    91.36 | Length:   92.1 | Noise: 0.158 | FPS: 136
+Steps:  230000 | Episodes:  3605 | Reward:    89.26 | Length:   91.4 | Noise: 0.158 | FPS: 136
+[EVAL] Steps: 230000 | Mean Reward: 159.80
+Steps:  231000 | Episodes:  3618 | Reward:    90.85 | Length:   90.7 | Noise: 0.158 | FPS: 136
+Steps:  232000 | Episodes:  3631 | Reward:    85.83 | Length:   88.5 | Noise: 0.157 | FPS: 136
+Steps:  233000 | Episodes:  3645 | Reward:    78.03 | Length:   84.3 | Noise: 0.157 | FPS: 136
+Steps:  234000 | Episodes:  3657 | Reward:    78.43 | Length:   83.9 | Noise: 0.156 | FPS: 136
+Steps:  235000 | Episodes:  3671 | Reward:    73.80 | Length:   82.2 | Noise: 0.156 | FPS: 136
+Steps:  236000 | Episodes:  3685 | Reward:    72.06 | Length:   79.1 | Noise: 0.156 | FPS: 136
+Steps:  237000 | Episodes:  3697 | Reward:    73.21 | Length:   76.8 | Noise: 0.155 | FPS: 136
+Steps:  238000 | Episodes:  3710 | Reward:    73.84 | Length:   75.6 | Noise: 0.155 | FPS: 136
+Steps:  239000 | Episodes:  3722 | Reward:    75.04 | Length:   75.7 | Noise: 0.154 | FPS: 136
+Steps:  240000 | Episodes:  3735 | Reward:    78.64 | Length:   76.8 | Noise: 0.154 | FPS: 136
+[EVAL] Steps: 240000 | Mean Reward: 115.67
+Steps:  241000 | Episodes:  3750 | Reward:    79.34 | Length:   77.2 | Noise: 0.154 | FPS: 136
+Steps:  242000 | Episodes:  3761 | Reward:    78.94 | Length:   77.6 | Noise: 0.153 | FPS: 136
+Steps:  243000 | Episodes:  3772 | Reward:    81.82 | Length:   79.2 | Noise: 0.153 | FPS: 136
+Steps:  244000 | Episodes:  3783 | Reward:    85.04 | Length:   81.5 | Noise: 0.152 | FPS: 136
+Steps:  245000 | Episodes:  3792 | Reward:    91.94 | Length:   83.6 | Noise: 0.152 | FPS: 136
+Steps:  246000 | Episodes:  3801 | Reward:    91.80 | Length:   85.9 | Noise: 0.152 | FPS: 136
+Steps:  247000 | Episodes:  3811 | Reward:    94.77 | Length:   88.6 | Noise: 0.151 | FPS: 136
+Steps:  248000 | Episodes:  3823 | Reward:    94.99 | Length:   89.2 | Noise: 0.151 | FPS: 136
+Steps:  249000 | Episodes:  3835 | Reward:    95.13 | Length:   90.0 | Noise: 0.150 | FPS: 136
+Steps:  250000 | Episodes:  3848 | Reward:    93.51 | Length:   90.2 | Noise: 0.150 | FPS: 136
+
+======================================================================
+[DETAILED METRICS @ Step 250000]
+----------------------------------------------------------------------
+  Episodes:   Short(<50):   3 (3%)  |  Medium(50-200):  97  |  Long(>200):   0 (0%)
+  Length:     Avg: 90.2  |  Max: 179
+  Reward:     Min: -13.7  |  Max: 293.1  |  Avg: 93.5
+  Exploration: Noise=0.150
+  ADR:        Difficulty: 0.00  |  Stage: 0
+======================================================================
+
+
+================================================================================
+[DIAGNOSTIC @ Step 250000] WHY IS THE DRONE FAILING?
+================================================================================
+
+[CRASH REASONS]
+  angle       :  598 (100.0%) ##################################################
+  ground      :    0 (  0.0%)
+  distance    :    0 (  0.0%)
+  velocity    :    0 (  0.0%)
+  truncated   :    0 (  0.0%)
+  unknown     :    0 (  0.0%)
+
+  >>> MAIN PROBLEM: ANGLE (598 crashes, 100.0%)
+
+[AVERAGE PHYSICS STATE]
+  Avg RPM: 2835 (hover_rpm: 2700.0)
+  Avg Speed: 0.86 m/s
+  Avg Total Angle: 10.9 degrees
+  Avg Action: +0.085 (0=hover, -1=min, +1=max)
+
+[LAST CRASH DETAILS]
+  Reason: angle
+  RPM: 3066
+  Speed: 1.90 m/s
+  Roll: 31.1°, Pitch: -5.9°
+  Distance to target: 0.68 m
+  Battery voltage: 16.80 V
+  >>> DIAGNOSIS: Drone is flipping! Check hover_rpm or control authority
+
+[Q-VALUE ANALYSIS]
+  Q(action=-0.3) = -16.95
+  Q(action= 0.0) = -17.69
+  Q(action=+0.3) = -22.61
+  Actor output: -0.353
+  >>> BUG: Critic values NEGATIVE actions 5.7 higher than positive!
+
+[LOSS TREND]
+  Critic loss (recent): 38.60
+  Critic loss change: +0.40
+================================================================================
+
+[EVAL] Steps: 250000 | Mean Reward: 101.46
+Steps:  251000 | Episodes:  3862 | Reward:    92.98 | Length:   88.9 | Noise: 0.150 | FPS: 136
+Steps:  252000 | Episodes:  3875 | Reward:    96.81 | Length:   87.9 | Noise: 0.149 | FPS: 136
+Steps:  253000 | Episodes:  3887 | Reward:    94.27 | Length:   84.8 | Noise: 0.149 | FPS: 136
+Steps:  254000 | Episodes:  3899 | Reward:    89.30 | Length:   83.0 | Noise: 0.148 | FPS: 136
+Steps:  255000 | Episodes:  3916 | Reward:    84.37 | Length:   77.4 | Noise: 0.148 | FPS: 136
+Steps:  256000 | Episodes:  3928 | Reward:    80.50 | Length:   76.0 | Noise: 0.148 | FPS: 136
+Steps:  257000 | Episodes:  3943 | Reward:    80.70 | Length:   74.4 | Noise: 0.147 | FPS: 136
+Steps:  258000 | Episodes:  3957 | Reward:    82.81 | Length:   73.2 | Noise: 0.147 | FPS: 136
+Steps:  259000 | Episodes:  3969 | Reward:    83.37 | Length:   73.6 | Noise: 0.146 | FPS: 136
+Steps:  260000 | Episodes:  3980 | Reward:    85.15 | Length:   76.2 | Noise: 0.146 | FPS: 136
+[EVAL] Steps: 260000 | Mean Reward: 76.86
+Steps:  261000 | Episodes:  3992 | Reward:    83.72 | Length:   76.4 | Noise: 0.146 | FPS: 136
+Steps:  262000 | Episodes:  4003 | Reward:    83.61 | Length:   77.1 | Noise: 0.145 | FPS: 136
+Steps:  263000 | Episodes:  4016 | Reward:    84.22 | Length:   78.6 | Noise: 0.145 | FPS: 136
+Steps:  264000 | Episodes:  4027 | Reward:    85.78 | Length:   80.4 | Noise: 0.144 | FPS: 136
+Steps:  265000 | Episodes:  4041 | Reward:    84.02 | Length:   81.5 | Noise: 0.144 | FPS: 136
+Steps:  266000 | Episodes:  4054 | Reward:    84.94 | Length:   82.0 | Noise: 0.144 | FPS: 136
+Steps:  267000 | Episodes:  4066 | Reward:    85.89 | Length:   82.2 | Noise: 0.143 | FPS: 136
+Steps:  268000 | Episodes:  4079 | Reward:    82.94 | Length:   81.8 | Noise: 0.143 | FPS: 136
+Steps:  269000 | Episodes:  4091 | Reward:    81.36 | Length:   81.5 | Noise: 0.142 | FPS: 136
+Steps:  270000 | Episodes:  4100 | Reward:    81.14 | Length:   82.7 | Noise: 0.142 | FPS: 136
+[EVAL] Steps: 270000 | Mean Reward: 101.77
+Steps:  271000 | Episodes:  4110 | Reward:    85.46 | Length:   84.6 | Noise: 0.142 | FPS: 136
+Steps:  272000 | Episodes:  4123 | Reward:    86.88 | Length:   84.5 | Noise: 0.141 | FPS: 136
+Steps:  273000 | Episodes:  4136 | Reward:    86.65 | Length:   83.2 | Noise: 0.141 | FPS: 136
+Steps:  274000 | Episodes:  4148 | Reward:    88.89 | Length:   84.5 | Noise: 0.140 | FPS: 136
+Steps:  275000 | Episodes:  4160 | Reward:    83.15 | Length:   84.6 | Noise: 0.140 | FPS: 136
+Steps:  276000 | Episodes:  4174 | Reward:    80.87 | Length:   83.8 | Noise: 0.140 | FPS: 136
+Steps:  277000 | Episodes:  4183 | Reward:    79.01 | Length:   84.9 | Noise: 0.139 | FPS: 136
+Steps:  278000 | Episodes:  4194 | Reward:    81.36 | Length:   85.5 | Noise: 0.139 | FPS: 136
+Steps:  279000 | Episodes:  4207 | Reward:    85.76 | Length:   83.5 | Noise: 0.138 | FPS: 135
+Steps:  280000 | Episodes:  4219 | Reward:    80.77 | Length:   82.7 | Noise: 0.138 | FPS: 135
+[EVAL] Steps: 280000 | Mean Reward: 115.06
+Steps:  281000 | Episodes:  4231 | Reward:    81.31 | Length:   82.2 | Noise: 0.138 | FPS: 135
+Steps:  282000 | Episodes:  4242 | Reward:    80.90 | Length:   84.2 | Noise: 0.137 | FPS: 135
+Steps:  283000 | Episodes:  4253 | Reward:    81.53 | Length:   86.4 | Noise: 0.137 | FPS: 135
+Steps:  284000 | Episodes:  4264 | Reward:    86.35 | Length:   86.9 | Noise: 0.136 | FPS: 135
+Steps:  285000 | Episodes:  4274 | Reward:    89.50 | Length:   89.1 | Noise: 0.136 | FPS: 135
+Steps:  286000 | Episodes:  4285 | Reward:    93.34 | Length:   89.4 | Noise: 0.136 | FPS: 135
+Steps:  287000 | Episodes:  4294 | Reward:    91.95 | Length:   90.1 | Noise: 0.135 | FPS: 135
+Steps:  288000 | Episodes:  4306 | Reward:    84.97 | Length:   90.4 | Noise: 0.135 | FPS: 135
+Steps:  289000 | Episodes:  4316 | Reward:    89.06 | Length:   91.2 | Noise: 0.134 | FPS: 135
+Steps:  290000 | Episodes:  4327 | Reward:    94.22 | Length:   93.3 | Noise: 0.134 | FPS: 135
+[EVAL] Steps: 290000 | Mean Reward: 80.49
+Steps:  291000 | Episodes:  4338 | Reward:    92.01 | Length:   93.2 | Noise: 0.134 | FPS: 135
+Steps:  292000 | Episodes:  4351 | Reward:    93.03 | Length:   93.0 | Noise: 0.133 | FPS: 135
+Steps:  293000 | Episodes:  4364 | Reward:    87.89 | Length:   90.8 | Noise: 0.133 | FPS: 135
+Steps:  294000 | Episodes:  4376 | Reward:    82.56 | Length:   88.4 | Noise: 0.132 | FPS: 135
+Steps:  295000 | Episodes:  4388 | Reward:    86.56 | Length:   86.9 | Noise: 0.132 | FPS: 135
+Steps:  296000 | Episodes:  4397 | Reward:    85.62 | Length:   86.8 | Noise: 0.132 | FPS: 135
+Steps:  297000 | Episodes:  4408 | Reward:    88.09 | Length:   88.3 | Noise: 0.131 | FPS: 135
+Steps:  298000 | Episodes:  4418 | Reward:    87.99 | Length:   88.6 | Noise: 0.131 | FPS: 135
+Steps:  299000 | Episodes:  4429 | Reward:    85.29 | Length:   88.2 | Noise: 0.130 | FPS: 135
+Steps:  300000 | Episodes:  4441 | Reward:    87.68 | Length:   88.3 | Noise: 0.130 | FPS: 135
+
+======================================================================
+[DETAILED METRICS @ Step 300000]
+----------------------------------------------------------------------
+  Episodes:   Short(<50):   0 (0%)  |  Medium(50-200): 100  |  Long(>200):   0 (0%)
+  Length:     Avg: 88.3  |  Max: 164
+  Reward:     Min: -23.1  |  Max: 274.3  |  Avg: 87.7
+  Exploration: Noise=0.130
+  ADR:        Difficulty: 0.00  |  Stage: 0
+======================================================================
+
+
+================================================================================
+[DIAGNOSTIC @ Step 300000] WHY IS THE DRONE FAILING?
+================================================================================
+
+[CRASH REASONS]
+  angle       :  593 (100.0%) ##################################################
+  ground      :    0 (  0.0%)
+  distance    :    0 (  0.0%)
+  velocity    :    0 (  0.0%)
+  truncated   :    0 (  0.0%)
+  unknown     :    0 (  0.0%)
+
+  >>> MAIN PROBLEM: ANGLE (593 crashes, 100.0%)
+
+[AVERAGE PHYSICS STATE]
+  Avg RPM: 2833 (hover_rpm: 2700.0)
+  Avg Speed: 0.82 m/s
+  Avg Total Angle: 10.4 degrees
+  Avg Action: +0.091 (0=hover, -1=min, +1=max)
+
+[LAST CRASH DETAILS]
+  Reason: angle
+  RPM: 4222
+  Speed: 2.82 m/s
+  Roll: 30.6°, Pitch: -2.4°
+  Distance to target: 0.73 m
+  Battery voltage: 16.80 V
+  >>> DIAGNOSIS: Drone is flipping! Check hover_rpm or control authority
+
+[Q-VALUE ANALYSIS]
+  Q(action=-0.3) = +45.79
+  Q(action= 0.0) = +44.18
+  Q(action=+0.3) = +42.67
+  Actor output: +0.466
+  >>> BUG: Critic values NEGATIVE actions 3.1 higher than positive!
+
+[LOSS TREND]
+  Critic loss (recent): 32.45
+  Critic loss change: -0.97
+================================================================================
+
+[EVAL] Steps: 300000 | Mean Reward: 71.13
+Steps:  301000 | Episodes:  4451 | Reward:    92.86 | Length:   89.2 | Noise: 0.130 | FPS: 135
+Steps:  302000 | Episodes:  4459 | Reward:    96.76 | Length:   91.8 | Noise: 0.129 | FPS: 135
+Steps:  303000 | Episodes:  4472 | Reward:    97.50 | Length:   93.1 | Noise: 0.129 | FPS: 135
+Steps:  304000 | Episodes:  4487 | Reward:    93.55 | Length:   91.7 | Noise: 0.128 | FPS: 135
+Steps:  305000 | Episodes:  4499 | Reward:    86.96 | Length:   88.9 | Noise: 0.128 | FPS: 135
+Steps:  306000 | Episodes:  4513 | Reward:    83.27 | Length:   85.2 | Noise: 0.128 | FPS: 135
+Steps:  307000 | Episodes:  4525 | Reward:    77.56 | Length:   83.1 | Noise: 0.127 | FPS: 135
+Steps:  308000 | Episodes:  4539 | Reward:    75.68 | Length:   81.7 | Noise: 0.127 | FPS: 135
+Steps:  309000 | Episodes:  4551 | Reward:    70.78 | Length:   80.2 | Noise: 0.126 | FPS: 135
+Steps:  310000 | Episodes:  4561 | Reward:    68.34 | Length:   78.3 | Noise: 0.126 | FPS: 135
+[EVAL] Steps: 310000 | Mean Reward: 66.48
+Steps:  311000 | Episodes:  4572 | Reward:    70.62 | Length:   80.1 | Noise: 0.126 | FPS: 135
+Steps:  312000 | Episodes:  4586 | Reward:    67.82 | Length:   80.6 | Noise: 0.125 | FPS: 135
+Steps:  313000 | Episodes:  4598 | Reward:    68.54 | Length:   80.3 | Noise: 0.125 | FPS: 135
+Steps:  314000 | Episodes:  4612 | Reward:    71.23 | Length:   80.3 | Noise: 0.124 | FPS: 135
+Steps:  315000 | Episodes:  4625 | Reward:    71.01 | Length:   80.8 | Noise: 0.124 | FPS: 135
+Steps:  316000 | Episodes:  4639 | Reward:    71.79 | Length:   80.8 | Noise: 0.124 | FPS: 135
+Steps:  317000 | Episodes:  4650 | Reward:    68.33 | Length:   79.0 | Noise: 0.123 | FPS: 135
+Steps:  318000 | Episodes:  4662 | Reward:    70.18 | Length:   80.0 | Noise: 0.123 | FPS: 135
+Steps:  319000 | Episodes:  4671 | Reward:    70.67 | Length:   80.2 | Noise: 0.122 | FPS: 135
+Steps:  320000 | Episodes:  4681 | Reward:    75.87 | Length:   82.1 | Noise: 0.122 | FPS: 135
+[EVAL] Steps: 320000 | Mean Reward: 86.17
+Steps:  321000 | Episodes:  4691 | Reward:    79.28 | Length:   85.8 | Noise: 0.122 | FPS: 135
+Steps:  322000 | Episodes:  4703 | Reward:    78.56 | Length:   86.7 | Noise: 0.121 | FPS: 134
+Steps:  323000 | Episodes:  4713 | Reward:    82.30 | Length:   88.8 | Noise: 0.121 | FPS: 134
+Steps:  324000 | Episodes:  4725 | Reward:    89.68 | Length:   90.1 | Noise: 0.120 | FPS: 134
+Steps:  325000 | Episodes:  4736 | Reward:    96.61 | Length:   91.7 | Noise: 0.120 | FPS: 134
+Steps:  326000 | Episodes:  4746 | Reward:   103.70 | Length:   94.9 | Noise: 0.120 | FPS: 134
+Steps:  327000 | Episodes:  4755 | Reward:   107.99 | Length:   96.5 | Noise: 0.119 | FPS: 134
+Steps:  328000 | Episodes:  4764 | Reward:   107.20 | Length:   96.0 | Noise: 0.119 | FPS: 134
+Steps:  329000 | Episodes:  4777 | Reward:   105.65 | Length:   95.7 | Noise: 0.118 | FPS: 134
+Steps:  330000 | Episodes:  4791 | Reward:   100.82 | Length:   89.9 | Noise: 0.118 | FPS: 134
+[EVAL] Steps: 330000 | Mean Reward: 147.22
+Steps:  331000 | Episodes:  4805 | Reward:   101.07 | Length:   88.3 | Noise: 0.118 | FPS: 134
+Steps:  332000 | Episodes:  4816 | Reward:    95.12 | Length:   87.7 | Noise: 0.117 | FPS: 134
+Steps:  333000 | Episodes:  4825 | Reward:    94.34 | Length:   89.5 | Noise: 0.117 | FPS: 134
+Steps:  334000 | Episodes:  4836 | Reward:    85.27 | Length:   90.2 | Noise: 0.116 | FPS: 134

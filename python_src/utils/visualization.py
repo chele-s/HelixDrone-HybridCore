@@ -94,13 +94,24 @@ class DroneVisualizer:
         )
         
         if data.target is not None:
-            ax.scatter(
-                data.target[0], data.target[1], data.target[2],
-                color=self.config.target_color,
-                s=self.config.target_size,
-                marker='*',
-                label='Target'
-            )
+            target = np.asarray(data.target)
+            if target.ndim == 2:
+                ax.plot(
+                    target[:, 0], target[:, 1], target[:, 2],
+                    color=self.config.target_color,
+                    alpha=0.5,
+                    linewidth=1.5,
+                    linestyle='--',
+                    label='Target Trajectory'
+                )
+            else:
+                ax.scatter(
+                    target[0], target[1], target[2],
+                    color=self.config.target_color,
+                    s=self.config.target_size,
+                    marker='*',
+                    label='Target'
+                )
         
         self._set_axis_properties(ax, positions)
         ax.legend()
@@ -139,11 +150,20 @@ class DroneVisualizer:
             ax.scatter(positions[-1, i], positions[-1, j], color='red', s=50, marker='s')
             
             if data.target is not None:
-                ax.scatter(
-                    data.target[i], data.target[j],
-                    color=self.config.target_color,
-                    s=100, marker='*'
-                )
+                target = np.asarray(data.target)
+                if target.ndim == 2:
+                    ax.plot(
+                        target[:, i], target[:, j],
+                        color=self.config.target_color,
+                        alpha=0.5,
+                        linestyle='--'
+                    )
+                else:
+                    ax.scatter(
+                        target[i], target[j],
+                        color=self.config.target_color,
+                        s=100, marker='*'
+                    )
             
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
@@ -183,7 +203,11 @@ class DroneVisualizer:
         ax.plot(t, data.positions[:, 1], label='Y', color='#4CAF50')
         ax.plot(t, data.positions[:, 2], label='Z', color='#2196F3')
         if data.target is not None:
-            ax.axhline(y=data.target[2], color='#2196F3', linestyle='--', alpha=0.5)
+            target = np.asarray(data.target)
+            if target.ndim == 2:
+                ax.plot(t[:len(target)], target[:, 2], color='#2196F3', linestyle='--', alpha=0.5, label='Target Z')
+            else:
+                ax.axhline(y=target[2], color='#2196F3', linestyle='--', alpha=0.5)
         ax.set_ylabel('Position (m)')
         ax.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
@@ -254,10 +278,17 @@ class DroneVisualizer:
         point, = ax.plot([], [], [], 'o', color=self.config.drone_color, markersize=10)
         
         if data.target is not None:
-            ax.scatter(
-                data.target[0], data.target[1], data.target[2],
-                color=self.config.target_color, s=200, marker='*'
-            )
+            target = np.asarray(data.target)
+            if target.ndim == 2:
+                ax.plot(
+                    target[:, 0], target[:, 1], target[:, 2],
+                    color=self.config.target_color, linewidth=1.5, linestyle='--', alpha=0.5
+                )
+            else:
+                ax.scatter(
+                    target[0], target[1], target[2],
+                    color=self.config.target_color, s=200, marker='*'
+                )
         
         trail_length = min(self.config.trail_length, len(positions))
         

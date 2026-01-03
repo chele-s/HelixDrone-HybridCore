@@ -11,7 +11,8 @@ class ReplayBuffer:
         capacity: int,
         device: torch.device,
         state_dim: Optional[int] = None,
-        action_dim: Optional[int] = None
+        action_dim: Optional[int] = None,
+        **kwargs
     ):
         self.capacity = capacity
         self.device = device
@@ -24,6 +25,14 @@ class ReplayBuffer:
             self.rewards = np.zeros((capacity, 1), dtype=np.float32)
             self.next_states = np.zeros((capacity, state_dim), dtype=np.float32)
             self.dones = np.zeros((capacity, 1), dtype=np.float32)
+            
+            self.critic_states = None
+            self.next_critic_states = None
+            if kwargs.get('critic_state_dim') is not None:
+                dim = kwargs.get('critic_state_dim')
+                self.critic_states = np.zeros((capacity, dim), dtype=np.float32)
+                self.next_critic_states = np.zeros((capacity, dim), dtype=np.float32)
+                
             self._preallocated = True
         else:
             self.buffer = deque(maxlen=capacity)
@@ -35,7 +44,8 @@ class ReplayBuffer:
         action: np.ndarray,
         reward: float,
         next_state: np.ndarray,
-        done: bool
+        done: bool,
+        **kwargs
     ) -> None:
         if self._preallocated:
             self.states[self.ptr] = state
@@ -43,6 +53,10 @@ class ReplayBuffer:
             self.rewards[self.ptr] = reward
             self.next_states[self.ptr] = next_state
             self.dones[self.ptr] = float(done)
+            
+            if self.critic_states is not None and kwargs.get('critic_state') is not None:
+                self.critic_states[self.ptr] = kwargs.get('critic_state')
+                self.next_critic_states[self.ptr] = kwargs.get('next_critic_state')
             
             self.ptr = (self.ptr + 1) % self.capacity
             self.size = min(self.size + 1, self.capacity)
@@ -55,7 +69,8 @@ class ReplayBuffer:
         actions: np.ndarray,
         rewards: np.ndarray,
         next_states: np.ndarray,
-        dones: np.ndarray
+        dones: np.ndarray,
+        **kwargs
     ) -> None:
         batch_size = states.shape[0]
         
@@ -86,6 +101,20 @@ class ReplayBuffer:
                 
                 self.dones[self.ptr:] = dones[:first_part].reshape(-1, 1).astype(np.float32)
                 self.dones[:second_part] = dones[first_part:].reshape(-1, 1).astype(np.float32)
+
+            if self.critic_states is not None and kwargs.get('critic_states') is not None:
+                cs = kwargs.get('critic_states')
+                ncs = kwargs.get('next_critic_states')
+                if end_ptr <= self.capacity:
+                    self.critic_states[self.ptr:end_ptr] = cs
+                    self.next_critic_states[self.ptr:end_ptr] = ncs
+                else:
+                    first_part = self.capacity - self.ptr
+                    second_part = end_ptr - self.capacity
+                    self.critic_states[self.ptr:] = cs[:first_part]
+                    self.critic_states[:second_part] = cs[first_part:]
+                    self.next_critic_states[self.ptr:] = ncs[:first_part]
+                    self.next_critic_states[:second_part] = ncs[first_part:]
             
             self.ptr = end_ptr % self.capacity
             self.size = min(self.size + batch_size, self.capacity)
@@ -100,13 +129,21 @@ class ReplayBuffer:
         if self._preallocated:
             indices = np.random.randint(0, self.size, size=batch_size)
             
-            return (
+            batch = (
                 torch.FloatTensor(self.states[indices]).to(self.device),
                 torch.FloatTensor(self.actions[indices]).to(self.device),
                 torch.FloatTensor(self.rewards[indices]).to(self.device),
                 torch.FloatTensor(self.next_states[indices]).to(self.device),
                 torch.FloatTensor(self.dones[indices]).to(self.device)
             )
+            
+            if self.critic_states is not None:
+                batch += (
+                    torch.FloatTensor(self.critic_states[indices]).to(self.device),
+                    torch.FloatTensor(self.next_critic_states[indices]).to(self.device)
+                )
+            
+            return batch
         else:
             batch = random.sample(list(self.buffer), batch_size)
             state, action, reward, next_state, done = zip(*batch)
@@ -208,7 +245,8 @@ class PrioritizedReplayBuffer:
         alpha: float = 0.6,
         beta_start: float = 0.4,
         beta_frames: int = 100000,
-        epsilon: float = 1e-6
+        epsilon: float = 1e-6,
+        **kwargs
     ):
         self.capacity = capacity
         self.device = device
@@ -226,6 +264,13 @@ class PrioritizedReplayBuffer:
         self.next_states = np.zeros((capacity, state_dim), dtype=np.float32)
         self.dones = np.zeros((capacity, 1), dtype=np.float32)
         
+        self.critic_states = None
+        self.next_critic_states = None
+        if kwargs.get('critic_state_dim') is not None:
+            dim = kwargs.get('critic_state_dim')
+            self.critic_states = np.zeros((capacity, dim), dtype=np.float32)
+            self.next_critic_states = np.zeros((capacity, dim), dtype=np.float32)
+            
         self.size = 0
         self.max_priority = 1.0
     
@@ -239,7 +284,8 @@ class PrioritizedReplayBuffer:
         action: np.ndarray,
         reward: float,
         next_state: np.ndarray,
-        done: bool
+        done: bool,
+        **kwargs
     ) -> None:
         priority = self.max_priority ** self.alpha
         
@@ -251,6 +297,10 @@ class PrioritizedReplayBuffer:
         self.next_states[data_idx] = next_state
         self.dones[data_idx] = float(done)
         
+        if self.critic_states is not None and kwargs.get('critic_state') is not None:
+            self.critic_states[data_idx] = kwargs.get('critic_state')
+            self.next_critic_states[data_idx] = kwargs.get('next_critic_state')
+            
         self.size = min(self.size + 1, self.capacity)
     
     def push_batch(
@@ -259,7 +309,8 @@ class PrioritizedReplayBuffer:
         actions: np.ndarray,
         rewards: np.ndarray,
         next_states: np.ndarray,
-        dones: np.ndarray
+        dones: np.ndarray,
+        **kwargs
     ) -> None:
         batch_size = states.shape[0]
         priority = self.max_priority ** self.alpha
@@ -273,6 +324,12 @@ class PrioritizedReplayBuffer:
         self.next_states[data_indices] = next_states
         self.dones[data_indices] = dones.reshape(-1, 1).astype(np.float32)
         
+        if self.critic_states is not None and kwargs.get('critic_states') is not None:
+            cs = kwargs.get('critic_states')
+            ncs = kwargs.get('next_critic_states')
+            self.critic_states[data_indices] = cs
+            self.next_critic_states[data_indices] = ncs
+            
         self.size = min(self.size + batch_size, self.capacity)
     
     def sample(
@@ -309,7 +366,7 @@ class PrioritizedReplayBuffer:
         dones_batch = torch.as_tensor(self.dones[indices], dtype=torch.float32, device=self.device)
         weights_batch = torch.as_tensor(weights, dtype=torch.float32, device=self.device).unsqueeze(1)
         
-        return (
+        batch = (
             states_batch,
             actions_batch,
             rewards_batch,
@@ -318,6 +375,14 @@ class PrioritizedReplayBuffer:
             weights_batch,
             tree_indices
         )
+        
+        if self.critic_states is not None:
+            batch += (
+                torch.as_tensor(self.critic_states[indices], dtype=torch.float32, device=self.device),
+                torch.as_tensor(self.next_critic_states[indices], dtype=torch.float32, device=self.device)
+            )
+            
+        return batch
     
     def update_priorities(
         self, 
@@ -428,7 +493,8 @@ class CppPrioritizedReplayBuffer:
         alpha: float = 0.6,
         beta_start: float = 0.4,
         beta_frames: int = 100000,
-        epsilon: float = 1e-6
+        epsilon: float = 1e-6,
+        **kwargs
     ):
         self.device = device
         self.state_dim = state_dim
@@ -441,7 +507,7 @@ class CppPrioritizedReplayBuffer:
             self._use_cpp = True
         else:
             self._py_buffer = PrioritizedReplayBuffer(
-                capacity, device, state_dim, action_dim, alpha, beta_start, beta_frames, epsilon
+                capacity, device, state_dim, action_dim, alpha, beta_start, beta_frames, epsilon, **kwargs
             )
             self._use_cpp = False
     
@@ -451,7 +517,8 @@ class CppPrioritizedReplayBuffer:
         action: np.ndarray,
         reward: float,
         next_state: np.ndarray,
-        done: bool
+        done: bool,
+        **kwargs
     ) -> None:
         if self._use_cpp:
             self._cpp_buffer.push(
@@ -462,7 +529,7 @@ class CppPrioritizedReplayBuffer:
                 float(done)
             )
         else:
-            self._py_buffer.push(state, action, reward, next_state, done)
+            self._py_buffer.push(state, action, reward, next_state, done, **kwargs)
     
     def push_batch(
         self,
@@ -470,7 +537,8 @@ class CppPrioritizedReplayBuffer:
         actions: np.ndarray,
         rewards: np.ndarray,
         next_states: np.ndarray,
-        dones: np.ndarray
+        dones: np.ndarray,
+        **kwargs
     ) -> None:
         if self._use_cpp:
             self._cpp_buffer.push_batch(
@@ -481,7 +549,7 @@ class CppPrioritizedReplayBuffer:
                 dones.astype(np.float32).flatten()
             )
         else:
-            self._py_buffer.push_batch(states, actions, rewards, next_states, dones)
+            self._py_buffer.push_batch(states, actions, rewards, next_states, dones, **kwargs)
     
     def sample(
         self, 
@@ -489,8 +557,7 @@ class CppPrioritizedReplayBuffer:
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, 
                torch.Tensor, torch.Tensor, torch.Tensor, np.ndarray]:
         if self._use_cpp:
-            states, actions, rewards, next_states, dones, weights, tree_indices = \
-                self._cpp_buffer.sample(batch_size)
+            states, actions, rewards, next_states, dones, weights, tree_indices =                self._cpp_buffer.sample(batch_size)
             return (
                 torch.as_tensor(states, dtype=torch.float32, device=self.device),
                 torch.as_tensor(actions, dtype=torch.float32, device=self.device),

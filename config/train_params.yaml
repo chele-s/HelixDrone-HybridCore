@@ -2,9 +2,9 @@ agent:
   type: td3
   hidden_dim: 512
   lr_actor: 3.0e-4
-  lr_critic: 3.0e-4
+  lr_critic: 1.0e-4
   gamma: 0.99
-  tau: 0.005
+  tau: 0.002
 
 td3_specific:
   policy_noise: 0.15
@@ -18,7 +18,7 @@ exploration:
 
 replay_buffer:
   size: 1000000
-  use_per: true
+  use_per: false
   per_alpha: 0.7
   per_beta_start: 0.5
 
@@ -48,10 +48,10 @@ environment:
   motor_dynamics: true
   physics_sub_steps: 8
   use_sub_stepping: false
-  min_rpm: 2000.0
-  hover_rpm: 2750.0
+  min_rpm: 1000.0
+  hover_rpm: 2700.0
   max_rpm: 35000.0
-  rpm_range: 2000.0
+  rpm_range: 2500.0
   mass: 0.6
   action_smoothing: 0.5
   saturation_threshold: 0.9
@@ -60,22 +60,26 @@ observation:
   position_scale: 5.0
   velocity_scale: 5.0
   angular_velocity_scale: 10.0
+  include_target_error: true
+  include_target_velocity: true
+  include_prev_action: true
 
 rewards:
   position: 5.0
   velocity: 1.0
-  angular: -0.2
+  angular: -0.5
+  orientation: -2.0
+  stability: -0.5
   action: -0.001
-  action_rate: -0.5
-  action_accel: -0.3
-  action_jerk: -0.1
-  alive: 0.0
-  crash: -100.0
+  action_rate: -0.2
+  action_accel: -0.1
+  action_jerk: -0.05
+  alive: 1.0
+  crash: -25.0
   success: 100.0
   height_bonus: 0.5
-  stability_bonus: 1.0
   hover_bonus: 1.5
-  saturation_penalty: -0.1
+  saturation_penalty: -0.05
 
 termination:
   crash_height: 0.05
