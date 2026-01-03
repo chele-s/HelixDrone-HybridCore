@@ -46,3 +46,15 @@ drone_core.egg-info/SOURCES.txt
 drone_core.egg-info/top_level.txt
 C:\Users\elche\OneDrive\Documentos\GitHub\HelixDrone-HybridCore\.venv311
 .venv311
+unity_visualizer/README.md
+unity_visualizer/SETUP_GUIDE.md
+unity_visualizer/Scripts/Camera/OrbitCamera.cs
+unity_visualizer/Scripts/Core/CSVReplayReader.cs
+unity_visualizer/Scripts/Core/DroneController.cs
+unity_visualizer/Scripts/UI/TelemetryHUD.cs
+unity_visualizer/Scripts/Visual/CableRenderer.cs
+unity_visualizer/Scripts/Visual/FlightTrailRenderer.cs
+unity_visualizer/Scripts/Visual/GroundPlane.cs
+unity_visualizer/Scripts/Visual/RotorAnimator.cs
+unity_visualizer/Scripts/Visual/TargetMarker.cs
+wandb/run-20260102_230413-lcrjzqgo/run-lcrjzqgo.wandb
