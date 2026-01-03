@@ -29,7 +29,7 @@ class RewardConfig:
     position_weight: float = 0.0
     
     # Termination
-    crash_penalty: float = -25.0
+    crash_penalty: float = -10.0
     success_bonus: float = 100.0
     
     ground_penalty_weight: float = -5.0
@@ -47,7 +47,7 @@ class RewardConfig:
     
     crash_height: float = 0.05        
     crash_distance: float = 3.0      
-    crash_angle: float = 0.5         
+    crash_angle: float = 1.0         
     crash_velocity: float = 10.0
 
 

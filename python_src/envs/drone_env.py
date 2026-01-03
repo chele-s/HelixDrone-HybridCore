@@ -61,7 +61,7 @@ class ExtendedEnvConfig:
     wind_speed_range: Tuple[float, float] = (0.0, 4.0)
     motor_dynamics: bool = True
     use_sub_stepping: bool = True
-    use_motor_mixer: bool = True
+    use_motor_mixer: bool = False
     
     observation_noise: float = 0.01
     action_delay_steps: int = 0
@@ -258,18 +258,18 @@ class QuadrotorEnvV2(gym.Env):
     
     def _setup_sota_actuator(self):
         actuator_cfg = drone_core.SOTAActuatorConfig()
-        actuator_cfg.delay_ms = 5.0
-        actuator_cfg.tau_spin_up = 0.03
-        actuator_cfg.tau_spin_down = 0.015
-        actuator_cfg.rotor_inertia = 1.0e-5
+        actuator_cfg.delay_ms = 0.0
+        actuator_cfg.tau_spin_up = 0.01
+        actuator_cfg.tau_spin_down = 0.008
+        actuator_cfg.rotor_inertia = 1.0e-6
         actuator_cfg.voltage_sag_factor = 0.0
         actuator_cfg.max_rpm = self.config.max_rpm
         actuator_cfg.min_rpm = self.config.min_rpm
         actuator_cfg.hover_rpm = self.config.hover_rpm
         actuator_cfg.rpm_range = self.config.rpm_range
-        actuator_cfg.max_slew_rate = 100000.0
-        actuator_cfg.process_noise_std = 5.0
-        actuator_cfg.active_braking_gain = 2.0
+        actuator_cfg.max_slew_rate = 200000.0
+        actuator_cfg.process_noise_std = 0.0
+        actuator_cfg.active_braking_gain = 3.0
         actuator_cfg.thermal_time_constant = 1000.0
         actuator_cfg.nominal_voltage = 16.8
         self._sota_actuator = drone_core.SOTAActuatorModel(actuator_cfg)

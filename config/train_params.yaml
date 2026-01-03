@@ -18,7 +18,7 @@ exploration:
 
 replay_buffer:
   size: 1000000
-  use_per: false
+  use_per: true
   per_alpha: 0.7
   per_beta_start: 0.5
 
@@ -75,7 +75,7 @@ rewards:
   action_accel: -0.1
   action_jerk: -0.05
   alive: 1.0
-  crash: -25.0
+  crash: -10.0
   success: 100.0
   height_bonus: 0.5
   hover_bonus: 1.5
@@ -84,7 +84,7 @@ rewards:
 termination:
   crash_height: 0.05
   crash_distance: 3.0
-  crash_angle: 0.5
+  crash_angle: 1.0
   success_distance: 0.1
   success_velocity: 0.2
   success_hold_steps: 50
