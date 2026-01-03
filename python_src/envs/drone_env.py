@@ -266,7 +266,6 @@ class QuadrotorEnvV2(gym.Env):
         actuator_cfg.max_rpm = self.config.max_rpm
         actuator_cfg.min_rpm = self.config.min_rpm
         actuator_cfg.hover_rpm = self.config.hover_rpm
-        actuator_cfg.rpm_range = self.config.rpm_range
         actuator_cfg.max_slew_rate = 200000.0
         actuator_cfg.process_noise_std = 0.0
         actuator_cfg.active_braking_gain = 3.0
@@ -527,50 +526,91 @@ class QuadrotorEnvV2(gym.Env):
         ang_vel = np.array([s.angular_velocity.x, s.angular_velocity.y, s.angular_velocity.z])
         
         euler = s.orientation.to_euler_zyx()
-        euler_arr = np.array([euler.x, euler.y, euler.z])
+        roll, pitch, yaw = abs(euler.x), abs(euler.y), euler.z
         
-        payload_pos = None
-        swing_angle = 0.0
-        payload_energy = 0.0
+        error_vec = self.target - pos
+        dist = np.linalg.norm(error_vec)
+        speed = np.linalg.norm(vel)
+        omega_xy = np.linalg.norm(ang_vel[:2])
+        omega_z = abs(ang_vel[2])
         
-        if self._payload is not None:
-            ps = self._payload.get_payload_state()
-            payload_pos = np.array([ps.position.x, ps.position.y, ps.position.z])
-            swing_angle = self._payload.get_cable_angle_from_vertical()
-            payload_energy = self._payload.get_total_energy()
+        prev_dist = getattr(self, '_prev_dist', dist)
+        self._prev_dist = dist
         
-        reward_state = RewardState(
-            position=pos,
-            velocity=vel,
-            angular_velocity=ang_vel,
-            euler_angles=euler_arr,
-            target_position=self.target,
-            target_velocity=self._target_velocity,
-            action=action,
-            action_rate=self._action_history.get_rate(),
-            action_accel=self._action_history.get_accel(),
-            motor_rpm=self._current_rpm if hasattr(self, '_current_rpm') else np.zeros(4),
-            hover_rpm=self.config.hover_rpm,
-            payload_swing_angle=swing_angle,
-            payload_position=payload_pos,
-            payload_energy=payload_energy,
+        r_progress = (prev_dist - dist) * 3.0
+        
+        r_proximity = np.exp(-dist * 2.0) * 1.5
+        
+        target_dir = error_vec / (dist + 1e-6)
+        forward_body = np.array([np.cos(yaw), np.sin(yaw), 0])
+        heading_alignment = np.dot(forward_body[:2], target_dir[:2])
+        r_heading = heading_alignment * 2.0
+        
+        action_diff = np.linalg.norm(self._prev_action - action) if hasattr(self, '_prev_action') else 0.0
+        r_smooth = -action_diff ** 2 * 0.5
+        
+        r_stability = -omega_xy * 0.1
+        
+        r_orientation = np.exp(-(roll + pitch) * 5.0) * 2.0
+        
+        if speed < 0.5:
+            r_anti_spin = -omega_z * 0.3
+        else:
+            r_anti_spin = -omega_z * 0.05
+        
+        r_anti_kamikaze = 0.0
+        if dist < 1.0 and speed > 2.0:
+            r_anti_kamikaze = -1.0
+        
+        if pos[2] < 0.3:
+            r_ground = -(0.3 - pos[2]) * 5.0
+        else:
+            r_ground = 0.0
+        
+        reward = (
+            r_progress +
+            r_proximity +
+            r_heading +
+            r_smooth +
+            r_stability +
+            r_orientation +
+            r_anti_spin +
+            r_anti_kamikaze +
+            r_ground
         )
         
-        reward = self._reward_builder.compute(reward_state)
-        
-        crashed, crash_reason = self._reward_builder.check_termination(reward_state)
-        self._last_crash_reason = crash_reason if crashed else None
-        if crashed:
-            reward = self._reward_builder.config.crash_penalty
-        
-        if self._reward_builder.check_success(reward_state):
-            self._success_counter += 1
-            if self._success_counter >= 50:
-                reward += self._reward_builder.config.success_bonus
+        is_hovering = dist < 0.3 and speed < 0.3 and roll < 0.15 and pitch < 0.15
+        if is_hovering:
+            self._hover_duration = getattr(self, '_hover_duration', 0) + 1
+            reward += min(self._hover_duration / 20.0, 4.0)
         else:
-            self._success_counter = max(0, self._success_counter - 1)
+            self._hover_duration = max(0, getattr(self, '_hover_duration', 0) - 1)
         
-        return float(reward), crashed
+        terminated = False
+        crashed = False
+        crash_reason = None
+        
+        if pos[2] < 0.05:
+            crashed = True
+            crash_reason = "ground"
+        elif dist > 3.0:
+            crashed = True
+            crash_reason = "distance"
+        elif roll > 1.0 or pitch > 1.0:
+            crashed = True
+            crash_reason = "angle"
+        elif speed > 10.0:
+            crashed = True
+            crash_reason = "velocity"
+        
+        if crashed:
+            reward = -10.0
+            terminated = True
+            self._last_crash_reason = crash_reason
+        else:
+            self._last_crash_reason = None
+        
+        return float(reward), terminated
     
     def _get_info(self) -> Dict[str, Any]:
         s = self._drone.get_state()

@@ -370,6 +370,8 @@ class TD3Agent:
             target_q1, target_q2 = self.critic_target(next_states_critic, next_actions)
             target_q = torch.min(target_q1, target_q2)
             target_q = rewards + (1 - dones) * self.gamma * target_q
+            max_q = 1000.0 / (1.0 - self.gamma)
+            target_q = torch.clamp(target_q, -max_q, max_q)
         
         current_q1, current_q2 = self.critic(states_critic, actions)
         
