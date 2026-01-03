@@ -47,3 +47,6 @@ drone_core.egg-info/top_level.txt
 C:\Users\elche\OneDrive\Documentos\GitHub\HelixDrone-HybridCore\.venv311
 .venv311
 unity_visualizer
+wandb
+wandb/run-20260102_230413-lcrjzqgo/run-lcrjzqgo.wandb
+wandb/run-20260102_230413-lcrjzqgo/files/output.log
