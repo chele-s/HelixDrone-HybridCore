@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(ROOT_DIR, 'build', 'Release'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'build'))
 
 from python_src.envs.drone_env import QuadrotorEnv, EnvConfig, TaskType
-from python_src.agents import TD3Agent, create_agent
+from python_src.agents import TD3Agent, TD3LSTMAgent, create_agent
 from python_src.utils.csv_logger import CSVLogger, CSVLoggerConfig
 from python_src.utils.visualization import DroneVisualizer, TrajectoryData, VisualizationConfig
 from python_src.utils.helix_math import RunningMeanStd
@@ -85,17 +85,34 @@ class ReplayGenerator:
         self.state_dim = self.env.observation_space.shape[0]
         self.action_dim = self.env.action_space.shape[0]
         
+        self.use_lstm = self.config.agent_type.lower() == 'td3_lstm'
+        if self.use_lstm:
+            self.base_obs_dim = 20
+        
     def _load_agent(self):
-        self.agent = create_agent(
-            agent_type=self.config.agent_type,
-            state_dim=self.state_dim,
-            action_dim=self.action_dim,
-            device=self.device,
-            hidden_dim=512
-        )
+        if self.use_lstm:
+            self.agent = TD3LSTMAgent(
+                obs_dim=self.base_obs_dim,
+                action_dim=self.action_dim,
+                device=self.device,
+                hidden_dim=512,
+                lstm_hidden=128,
+                lstm_layers=2,
+                sequence_length=16
+            )
+        else:
+            self.agent = create_agent(
+                agent_type=self.config.agent_type,
+                state_dim=self.state_dim,
+                action_dim=self.action_dim,
+                device=self.device,
+                hidden_dim=512
+            )
+        
         checkpoint_path = Path(self.config.checkpoint_path)
         if checkpoint_path.exists():
-            if (checkpoint_path / 'td3_checkpoint.pt').exists():
+            checkpoint_file = 'td3_lstm_checkpoint.pt' if self.use_lstm else 'td3_checkpoint.pt'
+            if (checkpoint_path / checkpoint_file).exists():
                 self.agent.load(checkpoint_path)
             elif checkpoint_path.is_file():
                 self.agent.load(checkpoint_path.parent)
@@ -155,6 +172,9 @@ class ReplayGenerator:
         
         obs = self._normalize_obs(obs_raw)
         
+        if self.use_lstm:
+            self.agent.reset_hidden_states()
+        
         self.logger.start_episode(episode_id)
         
         data = {
@@ -168,12 +188,17 @@ class ReplayGenerator:
             current_target = target_generator.update(self.env_config.dt)
             self.env.target = current_target
             
-            action = self.agent.get_action(obs, add_noise=False)
+            if self.use_lstm:
+                obs_base = self.env._get_base_obs() if hasattr(self.env, '_get_base_obs') else obs_raw[:self.base_obs_dim]
+                action = self.agent.get_action(obs_base, add_noise=False)
+            else:
+                action = self.agent.get_action(obs, add_noise=False)
             
             state = self.env.get_drone_state()
             self.logger.log_step(state, action, 0.0, step * self.env_config.dt)
             
             next_obs_raw, reward, terminated, truncated, info = self.env.step(action)
+            obs_raw = next_obs_raw
             obs = self._normalize_obs(next_obs_raw)
             total_reward += reward
             

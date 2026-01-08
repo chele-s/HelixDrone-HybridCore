@@ -260,3 +260,232 @@ def create_mlp(
                 orthogonal_init(layer)
     
     return net
+
+
+class LSTMActor(nn.Module):
+    def __init__(
+        self,
+        obs_dim: int,
+        action_dim: int,
+        hidden_dim: int = 256,
+        lstm_hidden: int = 128,
+        num_layers: int = 2,
+        max_action: float = 1.0,
+        dropout: float = 0.0
+    ):
+        super(LSTMActor, self).__init__()
+        
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.lstm_hidden = lstm_hidden
+        self.num_layers = num_layers
+        self.max_action = max_action
+        
+        self.input_proj = nn.Linear(obs_dim, lstm_hidden)
+        self.input_ln = nn.LayerNorm(lstm_hidden)
+        
+        self.lstm = nn.LSTM(
+            input_size=lstm_hidden,
+            hidden_size=lstm_hidden,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0
+        )
+        
+        self.post_lstm_ln = nn.LayerNorm(lstm_hidden)
+        
+        self.fc1 = nn.Linear(lstm_hidden, hidden_dim)
+        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.ln2 = nn.LayerNorm(hidden_dim)
+        self.fc_out = nn.Linear(hidden_dim, action_dim)
+        
+        self._init_weights()
+    
+    def _init_weights(self):
+        orthogonal_init(self.input_proj, gain=np.sqrt(2))
+        
+        for name, param in self.lstm.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.orthogonal_(param, gain=1.0)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param, gain=1.0)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+                n = param.size(0)
+                param.data[n // 4:n // 2].fill_(1.0)
+        
+        orthogonal_init(self.fc1, gain=np.sqrt(2))
+        orthogonal_init(self.fc2, gain=np.sqrt(2))
+        orthogonal_init(self.fc_out, gain=0.01)
+    
+    def forward(
+        self,
+        obs_seq: torch.Tensor,
+        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        batch_size = obs_seq.size(0)
+        
+        if hidden is None:
+            hidden = self.get_initial_hidden(batch_size, obs_seq.device)
+        
+        self.lstm.flatten_parameters()
+        x = self.input_proj(obs_seq)
+        x = self.input_ln(x)
+        x = F.relu(x)
+        
+        lstm_out, new_hidden = self.lstm(x, hidden)
+        
+        x = lstm_out[:, -1, :]
+        x = self.post_lstm_ln(x)
+        
+        x = F.relu(self.ln1(self.fc1(x)))
+        x = F.relu(self.ln2(self.fc2(x)))
+        action = torch.tanh(self.fc_out(x)) * self.max_action
+        
+        return action, new_hidden
+    
+    def get_initial_hidden(
+        self,
+        batch_size: int,
+        device: Optional[torch.device] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if device is None:
+            device = next(self.parameters()).device
+        
+        h = torch.zeros(self.num_layers, batch_size, self.lstm_hidden, device=device)
+        c = torch.zeros(self.num_layers, batch_size, self.lstm_hidden, device=device)
+        return (h, c)
+
+
+class LSTMCritic(nn.Module):
+    def __init__(
+        self,
+        obs_dim: int,
+        action_dim: int,
+        hidden_dim: int = 256,
+        lstm_hidden: int = 128,
+        num_layers: int = 2,
+        dropout: float = 0.0
+    ):
+        super(LSTMCritic, self).__init__()
+        
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.lstm_hidden = lstm_hidden
+        self.num_layers = num_layers
+        
+        self.input_proj = nn.Linear(obs_dim, lstm_hidden)
+        self.input_ln = nn.LayerNorm(lstm_hidden)
+        self.lstm = nn.LSTM(
+            input_size=lstm_hidden,
+            hidden_size=lstm_hidden,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0
+        )
+        self.post_lstm_ln = nn.LayerNorm(lstm_hidden)
+        
+        self.q1_fc1 = nn.Linear(lstm_hidden + action_dim, hidden_dim)
+        self.q1_ln1 = nn.LayerNorm(hidden_dim)
+        self.q1_fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.q1_ln2 = nn.LayerNorm(hidden_dim)
+        self.q1_out = nn.Linear(hidden_dim, 1)
+        
+        self.q2_fc1 = nn.Linear(lstm_hidden + action_dim, hidden_dim)
+        self.q2_ln1 = nn.LayerNorm(hidden_dim)
+        self.q2_fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.q2_ln2 = nn.LayerNorm(hidden_dim)
+        self.q2_out = nn.Linear(hidden_dim, 1)
+        
+        self._init_weights()
+    
+    def _init_weights(self):
+        orthogonal_init(self.input_proj, gain=np.sqrt(2))
+        
+        for name, param in self.lstm.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.orthogonal_(param, gain=1.0)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param, gain=1.0)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+                n = param.size(0)
+                param.data[n // 4:n // 2].fill_(1.0)
+        
+        for module in [self.q1_fc1, self.q1_fc2, self.q2_fc1, self.q2_fc2]:
+            orthogonal_init(module, gain=np.sqrt(2))
+        
+        orthogonal_init(self.q1_out, gain=1.0)
+        orthogonal_init(self.q2_out, gain=1.0)
+    
+    def forward(
+        self,
+        obs_seq: torch.Tensor,
+        action: torch.Tensor,
+        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        batch_size = obs_seq.size(0)
+        
+        if hidden is None:
+            hidden = self.get_initial_hidden(batch_size, obs_seq.device)
+        
+        self.lstm.flatten_parameters()
+        
+        x = self.input_proj(obs_seq)
+        x = self.input_ln(x)
+        x = F.relu(x)
+        lstm_out, new_hidden = self.lstm(x, hidden)
+        x = lstm_out[:, -1, :]
+        x = self.post_lstm_ln(x)
+        
+        sa = torch.cat([x, action], dim=-1)
+        
+        q1 = F.relu(self.q1_ln1(self.q1_fc1(sa)))
+        q1 = F.relu(self.q1_ln2(self.q1_fc2(q1)))
+        q1 = self.q1_out(q1)
+        
+        q2 = F.relu(self.q2_ln1(self.q2_fc1(sa)))
+        q2 = F.relu(self.q2_ln2(self.q2_fc2(q2)))
+        q2 = self.q2_out(q2)
+        
+        return q1, q2, new_hidden
+    
+    def q1_forward(
+        self,
+        obs_seq: torch.Tensor,
+        action: torch.Tensor,
+        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        batch_size = obs_seq.size(0)
+        
+        if hidden is None:
+            hidden = self.get_initial_hidden(batch_size, obs_seq.device)
+        
+        self.lstm.flatten_parameters()
+        
+        x = self.input_proj(obs_seq)
+        x = self.input_ln(x)
+        x = F.relu(x)
+        lstm_out, new_hidden = self.lstm(x, hidden)
+        x = lstm_out[:, -1, :]
+        x = self.post_lstm_ln(x)
+        x = torch.cat([x, action], dim=-1)
+        x = F.relu(self.q1_ln1(self.q1_fc1(x)))
+        x = F.relu(self.q1_ln2(self.q1_fc2(x)))
+        q1 = self.q1_out(x)
+        
+        return q1, new_hidden
+    
+    def get_initial_hidden(
+        self,
+        batch_size: int,
+        device: Optional[torch.device] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if device is None:
+            device = next(self.parameters()).device
+        
+        h = torch.zeros(self.num_layers, batch_size, self.lstm_hidden, device=device)
+        c = torch.zeros(self.num_layers, batch_size, self.lstm_hidden, device=device)
+        
+        return (h, c)

@@ -527,4 +527,459 @@ private:
     mutable std::mt19937 rng_;
 };
 
+struct alignas(64) SequenceBlock {
+    float* observations;
+    float* next_observations;
+    float* actions;
+    float* rewards;
+    float* dones;
+    int64_t* episode_ids;
+    size_t obs_dim;
+    size_t action_dim;
+    size_t capacity;
+    
+    SequenceBlock(size_t cap, size_t oDim, size_t aDim) 
+        : obs_dim(oDim), action_dim(aDim), capacity(cap) {
+        size_t obsBytes = ((cap * oDim * sizeof(float)) + 63) & ~63;
+        size_t actionBytes = ((cap * aDim * sizeof(float)) + 63) & ~63;
+        size_t scalarBytes = ((cap * sizeof(float)) + 63) & ~63;
+        size_t idBytes = ((cap * sizeof(int64_t)) + 63) & ~63;
+        
+        observations = static_cast<float*>(ALIGNED_ALLOC(64, obsBytes));
+        next_observations = static_cast<float*>(ALIGNED_ALLOC(64, obsBytes));
+        actions = static_cast<float*>(ALIGNED_ALLOC(64, actionBytes));
+        rewards = static_cast<float*>(ALIGNED_ALLOC(64, scalarBytes));
+        dones = static_cast<float*>(ALIGNED_ALLOC(64, scalarBytes));
+        episode_ids = static_cast<int64_t*>(ALIGNED_ALLOC(64, idBytes));
+        
+        std::memset(observations, 0, obsBytes);
+        std::memset(next_observations, 0, obsBytes);
+        std::memset(actions, 0, actionBytes);
+        std::memset(rewards, 0, scalarBytes);
+        std::memset(dones, 0, scalarBytes);
+        std::memset(episode_ids, 0, idBytes);
+    }
+    
+    ~SequenceBlock() {
+        ALIGNED_FREE(observations);
+        ALIGNED_FREE(next_observations);
+        ALIGNED_FREE(actions);
+        ALIGNED_FREE(rewards);
+        ALIGNED_FREE(dones);
+        ALIGNED_FREE(episode_ids);
+    }
+    
+    SequenceBlock(const SequenceBlock&) = delete;
+    SequenceBlock& operator=(const SequenceBlock&) = delete;
+    
+    void store(size_t idx, const float* obs, const float* act, float rew,
+               const float* next_obs, float done, int64_t ep_id) noexcept {
+        std::memcpy(observations + idx * obs_dim, obs, obs_dim * sizeof(float));
+        std::memcpy(actions + idx * action_dim, act, action_dim * sizeof(float));
+        std::memcpy(next_observations + idx * obs_dim, next_obs, obs_dim * sizeof(float));
+        rewards[idx] = rew;
+        dones[idx] = done;
+        episode_ids[idx] = ep_id;
+    }
+    
+    void gatherSequences(const size_t* start_indices, size_t batch_size, size_t seq_len,
+                         float* out_obs, float* out_next_obs, float* out_actions,
+                         float* out_rewards, float* out_dones) const noexcept {
+        for (size_t b = 0; b < batch_size; ++b) {
+            for (size_t t = 0; t < seq_len; ++t) {
+                size_t idx = (start_indices[b] + t) % capacity;
+                size_t out_idx = b * seq_len + t;
+                std::memcpy(out_obs + out_idx * obs_dim, observations + idx * obs_dim, obs_dim * sizeof(float));
+                std::memcpy(out_next_obs + out_idx * obs_dim, next_observations + idx * obs_dim, obs_dim * sizeof(float));
+                std::memcpy(out_actions + out_idx * action_dim, actions + idx * action_dim, action_dim * sizeof(float));
+                out_rewards[out_idx] = rewards[idx];
+                out_dones[out_idx] = dones[idx];
+            }
+        }
+    }
+};
+
+class SequenceReplayBuffer {
+public:
+    struct SampleResult {
+        AlignedVector<float> obs_seq;
+        AlignedVector<float> next_obs_seq;
+        AlignedVector<float> action_seq;
+        AlignedVector<float> rewards;
+        AlignedVector<float> dones;
+        AlignedVector<float> masks;
+        AlignedVector<size_t> start_indices;
+        size_t batch_size;
+        size_t seq_len;
+        size_t obs_dim;
+        size_t action_dim;
+    };
+    
+    SequenceReplayBuffer(size_t capacity, size_t obs_dim, size_t action_dim, size_t seq_len)
+        : capacity_(capacity),
+          obs_dim_(obs_dim),
+          action_dim_(action_dim),
+          seq_len_(seq_len),
+          ptr_(0),
+          size_(0),
+          current_episode_id_(0),
+          data_(capacity, obs_dim, action_dim),
+          rng_(std::random_device{}()),
+          valid_mask_((capacity + 63) / 64, 0),
+          valid_cache_dirty_(true) {}
+    
+    void push(const float* obs, const float* action, float reward, 
+              const float* next_obs, float done) noexcept {
+        data_.store(ptr_, obs, action, reward, next_obs, done, current_episode_id_);
+        updateValidity(ptr_);
+        ptr_ = (ptr_ + 1) % capacity_;
+        size_ = std::min(size_ + 1, capacity_);
+        if (done > 0.5f) ++current_episode_id_;
+    }
+    
+    void pushBatch(const float* obs, const float* actions, const float* rewards,
+                   const float* next_obs, const float* dones, size_t count) noexcept {
+        for (size_t i = 0; i < count; ++i) {
+            push(obs + i * obs_dim_, actions + i * action_dim_, rewards[i],
+                 next_obs + i * obs_dim_, dones[i]);
+        }
+    }
+    
+    SampleResult sample(size_t batch_size) {
+        if (valid_cache_dirty_) rebuildValidCache();
+        
+        SampleResult result;
+        result.batch_size = batch_size;
+        result.seq_len = seq_len_;
+        result.obs_dim = obs_dim_;
+        result.action_dim = action_dim_;
+        
+        size_t total_steps = batch_size * seq_len_;
+        result.obs_seq.resize(total_steps * obs_dim_);
+        result.next_obs_seq.resize(total_steps * obs_dim_);
+        result.action_seq.resize(total_steps * action_dim_);
+        result.rewards.resize(batch_size);
+        result.dones.resize(batch_size);
+        result.masks.resize(total_steps, 1.0f);
+        result.start_indices.resize(batch_size);
+        
+        size_t n_valid = valid_cache_.size();
+        if (n_valid == 0) return result;
+        
+        std::vector<size_t> selected(batch_size);
+        if (n_valid < batch_size) {
+            std::uniform_int_distribution<size_t> dist(0, n_valid - 1);
+            for (size_t i = 0; i < batch_size; ++i) selected[i] = valid_cache_[dist(rng_)];
+        } else {
+            std::sample(valid_cache_.begin(), valid_cache_.end(), selected.begin(),
+                        batch_size, rng_);
+        }
+        
+        std::copy(selected.begin(), selected.end(), result.start_indices.begin());
+        
+        AlignedVector<float> temp_rewards(total_steps);
+        AlignedVector<float> temp_dones(total_steps);
+        
+        data_.gatherSequences(selected.data(), batch_size, seq_len_,
+                              result.obs_seq.data(), result.next_obs_seq.data(),
+                              result.action_seq.data(), temp_rewards.data(), temp_dones.data());
+        
+        for (size_t b = 0; b < batch_size; ++b) {
+            result.rewards[b] = temp_rewards[b * seq_len_ + seq_len_ - 1];
+            result.dones[b] = temp_dones[b * seq_len_ + seq_len_ - 1];
+        }
+        
+        return result;
+    }
+    
+    size_t size() const noexcept { return size_; }
+    size_t capacity() const noexcept { return capacity_; }
+    bool isReady(size_t batch_size) { 
+        if (valid_cache_dirty_) rebuildValidCache();
+        return valid_cache_.size() >= batch_size; 
+    }
+
+private:
+    void updateValidity(size_t ptr) noexcept {
+        valid_cache_dirty_ = true;
+        for (size_t offset = 0; offset < seq_len_; ++offset) {
+            size_t start = (ptr + capacity_ - offset) % capacity_;
+            clearBit(start);
+        }
+        
+        if (size_ >= seq_len_) {
+            size_t candidate = (ptr + capacity_ - seq_len_ + 1) % capacity_;
+            if (isValidSequence(candidate)) setBit(candidate);
+        }
+    }
+    
+    bool isValidSequence(size_t start) const noexcept {
+        size_t end = (start + seq_len_ - 1) % capacity_;
+        if (data_.episode_ids[start] != data_.episode_ids[end]) return false;
+        for (size_t t = 0; t < seq_len_ - 1; ++t) {
+            size_t idx = (start + t) % capacity_;
+            if (data_.dones[idx] > 0.5f) return false;
+        }
+        return true;
+    }
+    
+    void rebuildValidCache() {
+        valid_cache_.clear();
+        valid_cache_.reserve(size_ / 2);
+        for (size_t i = 0; i < (capacity_ + 63) / 64; ++i) {
+            uint64_t bits = valid_mask_[i];
+            while (bits) {
+                #ifdef _MSC_VER
+                unsigned long bit;
+                _BitScanForward64(&bit, bits);
+                #else
+                size_t bit = __builtin_ctzll(bits);
+                #endif
+                size_t idx = i * 64 + bit;
+                if (idx < capacity_) valid_cache_.push_back(idx);
+                bits &= bits - 1;
+            }
+        }
+        valid_cache_dirty_ = false;
+    }
+    
+    void setBit(size_t idx) noexcept { valid_mask_[idx / 64] |= (1ULL << (idx % 64)); }
+    void clearBit(size_t idx) noexcept { valid_mask_[idx / 64] &= ~(1ULL << (idx % 64)); }
+    
+    size_t capacity_, obs_dim_, action_dim_, seq_len_;
+    size_t ptr_, size_;
+    int64_t current_episode_id_;
+    SequenceBlock data_;
+    mutable std::mt19937 rng_;
+    AlignedVector<uint64_t> valid_mask_;
+    std::vector<size_t> valid_cache_;
+    bool valid_cache_dirty_;
+};
+
+class SequencePrioritizedReplayBuffer {
+public:
+    struct SampleResult {
+        AlignedVector<float> obs_seq;
+        AlignedVector<float> next_obs_seq;
+        AlignedVector<float> action_seq;
+        AlignedVector<float> rewards;
+        AlignedVector<float> dones;
+        AlignedVector<float> masks;
+        AlignedVector<float> weights;
+        AlignedVector<size_t> start_indices;
+        size_t batch_size;
+        size_t seq_len;
+        size_t obs_dim;
+        size_t action_dim;
+    };
+    
+    SequencePrioritizedReplayBuffer(size_t capacity, size_t obs_dim, size_t action_dim, 
+                                     size_t seq_len, double alpha = 0.6,
+                                     double beta_start = 0.4, size_t beta_frames = 100000,
+                                     double epsilon = 1e-6)
+        : capacity_(capacity),
+          obs_dim_(obs_dim),
+          action_dim_(action_dim),
+          seq_len_(seq_len),
+          alpha_(alpha),
+          beta_start_(beta_start),
+          beta_frames_(beta_frames),
+          epsilon_(epsilon),
+          frame_(1),
+          ptr_(0),
+          size_(0),
+          current_episode_id_(0),
+          max_priority_(1.0),
+          data_(capacity, obs_dim, action_dim),
+          priorities_(capacity, 0.0),
+          rng_(std::random_device{}()),
+          valid_mask_((capacity + 63) / 64, 0),
+          valid_cache_dirty_(true) {}
+    
+    double beta() const noexcept {
+        double progress = static_cast<double>(frame_) / static_cast<double>(beta_frames_);
+        return std::min(1.0, beta_start_ + (1.0 - beta_start_) * progress);
+    }
+    
+    void push(const float* obs, const float* action, float reward,
+              const float* next_obs, float done) noexcept {
+        data_.store(ptr_, obs, action, reward, next_obs, done, current_episode_id_);
+        priorities_[ptr_] = std::pow(max_priority_, alpha_);
+        updateValidity(ptr_);
+        ptr_ = (ptr_ + 1) % capacity_;
+        size_ = std::min(size_ + 1, capacity_);
+        if (done > 0.5f) ++current_episode_id_;
+    }
+    
+    void pushBatch(const float* obs, const float* actions, const float* rewards,
+                   const float* next_obs, const float* dones, size_t count) noexcept {
+        for (size_t i = 0; i < count; ++i) {
+            push(obs + i * obs_dim_, actions + i * action_dim_, rewards[i],
+                 next_obs + i * obs_dim_, dones[i]);
+        }
+    }
+    
+    SampleResult sample(size_t batch_size) {
+        if (valid_cache_dirty_) rebuildValidCache();
+        
+        SampleResult result;
+        result.batch_size = batch_size;
+        result.seq_len = seq_len_;
+        result.obs_dim = obs_dim_;
+        result.action_dim = action_dim_;
+        
+        size_t total_steps = batch_size * seq_len_;
+        result.obs_seq.resize(total_steps * obs_dim_);
+        result.next_obs_seq.resize(total_steps * obs_dim_);
+        result.action_seq.resize(total_steps * action_dim_);
+        result.rewards.resize(batch_size);
+        result.dones.resize(batch_size);
+        result.masks.resize(total_steps, 1.0f);
+        result.weights.resize(batch_size);
+        result.start_indices.resize(batch_size);
+        
+        size_t n_valid = valid_cache_.size();
+        if (n_valid == 0) return result;
+        
+        AlignedVector<double> seq_priorities(n_valid);
+        double total_priority = 0.0;
+        for (size_t i = 0; i < n_valid; ++i) {
+            double p = 0.0;
+            for (size_t t = 0; t < seq_len_; ++t) {
+                p += priorities_[(valid_cache_[i] + t) % capacity_];
+            }
+            seq_priorities[i] = p / static_cast<double>(seq_len_);
+            total_priority += seq_priorities[i];
+        }
+        
+        if (total_priority < 1e-10) total_priority = 1e-10;
+        
+        std::vector<size_t> selected_idx(batch_size);
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        double segment = total_priority / static_cast<double>(batch_size);
+        
+        for (size_t i = 0; i < batch_size; ++i) {
+            double target = (static_cast<double>(i) + dist(rng_)) * segment;
+            double cumsum = 0.0;
+            for (size_t j = 0; j < n_valid; ++j) {
+                cumsum += seq_priorities[j];
+                if (cumsum >= target) {
+                    selected_idx[i] = j;
+                    break;
+                }
+            }
+            if (selected_idx[i] >= n_valid) selected_idx[i] = n_valid - 1;
+        }
+        
+        double current_beta = beta();
+        double max_weight = 0.0;
+        
+        for (size_t i = 0; i < batch_size; ++i) {
+            result.start_indices[i] = valid_cache_[selected_idx[i]];
+            double prob = seq_priorities[selected_idx[i]] / total_priority;
+            double w = std::pow(static_cast<double>(size_) * prob, -current_beta);
+            result.weights[i] = static_cast<float>(w);
+            max_weight = std::max(max_weight, w);
+        }
+        
+        float inv_max = 1.0f / static_cast<float>(max_weight + 1e-10);
+        for (size_t i = 0; i < batch_size; ++i) {
+            result.weights[i] *= inv_max;
+        }
+        
+        AlignedVector<float> temp_rewards(total_steps);
+        AlignedVector<float> temp_dones(total_steps);
+        
+        data_.gatherSequences(result.start_indices.data(), batch_size, seq_len_,
+                              result.obs_seq.data(), result.next_obs_seq.data(),
+                              result.action_seq.data(), temp_rewards.data(), temp_dones.data());
+        
+        for (size_t b = 0; b < batch_size; ++b) {
+            result.rewards[b] = temp_rewards[b * seq_len_ + seq_len_ - 1];
+            result.dones[b] = temp_dones[b * seq_len_ + seq_len_ - 1];
+        }
+        
+        ++frame_;
+        return result;
+    }
+    
+    void updatePriorities(const size_t* indices, const double* td_errors, size_t count) noexcept {
+        for (size_t i = 0; i < count; ++i) {
+            double priority = std::pow(std::abs(td_errors[i]) + epsilon_, alpha_);
+            for (size_t t = 0; t < seq_len_; ++t) {
+                priorities_[(indices[i] + t) % capacity_] = priority;
+            }
+            double current_max = max_priority_.load();
+            while (priority > current_max && !max_priority_.compare_exchange_weak(current_max, priority));
+        }
+    }
+    
+    size_t size() const noexcept { return size_; }
+    size_t capacity() const noexcept { return capacity_; }
+    bool isReady(size_t batch_size) {
+        if (valid_cache_dirty_) rebuildValidCache();
+        return valid_cache_.size() >= batch_size;
+    }
+
+private:
+    void updateValidity(size_t ptr) noexcept {
+        valid_cache_dirty_ = true;
+        for (size_t offset = 0; offset < seq_len_; ++offset) {
+            size_t start = (ptr + capacity_ - offset) % capacity_;
+            clearBit(start);
+        }
+        if (size_ >= seq_len_) {
+            size_t candidate = (ptr + capacity_ - seq_len_ + 1) % capacity_;
+            if (isValidSequence(candidate)) setBit(candidate);
+        }
+    }
+    
+    bool isValidSequence(size_t start) const noexcept {
+        size_t end = (start + seq_len_ - 1) % capacity_;
+        if (data_.episode_ids[start] != data_.episode_ids[end]) return false;
+        for (size_t t = 0; t < seq_len_ - 1; ++t) {
+            size_t idx = (start + t) % capacity_;
+            if (data_.dones[idx] > 0.5f) return false;
+        }
+        return true;
+    }
+    
+    void rebuildValidCache() {
+        valid_cache_.clear();
+        valid_cache_.reserve(size_ / 2);
+        for (size_t i = 0; i < (capacity_ + 63) / 64; ++i) {
+            uint64_t bits = valid_mask_[i];
+            while (bits) {
+                #ifdef _MSC_VER
+                unsigned long bit;
+                _BitScanForward64(&bit, bits);
+                #else
+                size_t bit = __builtin_ctzll(bits);
+                #endif
+                size_t idx = i * 64 + bit;
+                if (idx < capacity_) valid_cache_.push_back(idx);
+                bits &= bits - 1;
+            }
+        }
+        valid_cache_dirty_ = false;
+    }
+    
+    void setBit(size_t idx) noexcept { valid_mask_[idx / 64] |= (1ULL << (idx % 64)); }
+    void clearBit(size_t idx) noexcept { valid_mask_[idx / 64] &= ~(1ULL << (idx % 64)); }
+    
+    size_t capacity_, obs_dim_, action_dim_, seq_len_;
+    double alpha_, beta_start_, epsilon_;
+    size_t beta_frames_;
+    std::atomic<size_t> frame_;
+    size_t ptr_, size_;
+    int64_t current_episode_id_;
+    std::atomic<double> max_priority_;
+    SequenceBlock data_;
+    AlignedVector<double> priorities_;
+    mutable std::mt19937 rng_;
+    AlignedVector<uint64_t> valid_mask_;
+    std::vector<size_t> valid_cache_;
+    bool valid_cache_dirty_;
+};
+
 }

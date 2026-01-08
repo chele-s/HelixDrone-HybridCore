@@ -953,4 +953,164 @@ PYBIND11_MODULE(drone_core, m) {
         .def("set_gains", &SwingingPayloadController::setGains)
         .def("get_gains", &SwingingPayloadController::getGains)
         .def("reset", &SwingingPayloadController::reset);
+    
+    py::class_<helix::SequenceReplayBuffer>(m, "SequenceReplayBuffer")
+        .def(py::init<size_t, size_t, size_t, size_t>(),
+            py::arg("capacity"),
+            py::arg("obs_dim"),
+            py::arg("action_dim"),
+            py::arg("sequence_length"))
+        .def("push", [](helix::SequenceReplayBuffer& self,
+                        py::array_t<float, py::array::c_style | py::array::forcecast> obs,
+                        py::array_t<float, py::array::c_style | py::array::forcecast> action,
+                        float reward,
+                        py::array_t<float, py::array::c_style | py::array::forcecast> next_obs,
+                        float done) {
+            self.push(obs.data(), action.data(), reward, next_obs.data(), done);
+        })
+        .def("push_batch", [](helix::SequenceReplayBuffer& self,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> obs,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> actions,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> rewards,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> next_obs,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> dones) {
+            self.pushBatch(obs.data(), actions.data(), rewards.data(),
+                          next_obs.data(), dones.data(), static_cast<size_t>(obs.shape(0)));
+        })
+        .def("sample", [](helix::SequenceReplayBuffer& self, size_t batchSize) {
+            auto result = self.sample(batchSize);
+            py::ssize_t B = static_cast<py::ssize_t>(result.batch_size);
+            py::ssize_t L = static_cast<py::ssize_t>(result.seq_len);
+            py::ssize_t O = static_cast<py::ssize_t>(result.obs_dim);
+            py::ssize_t A = static_cast<py::ssize_t>(result.action_dim);
+            
+            py::array_t<float> obs_seq({B, L, O});
+            py::array_t<float> next_obs_seq({B, L, O});
+            py::array_t<float> action_seq({B, L, A});
+            py::array_t<float> rewards({B, static_cast<py::ssize_t>(1)});
+            py::array_t<float> dones({B, static_cast<py::ssize_t>(1)});
+            py::array_t<float> masks({B, L});
+            py::array_t<size_t> start_indices({B});
+            
+            std::memcpy(obs_seq.mutable_data(), result.obs_seq.data(), B * L * O * sizeof(float));
+            std::memcpy(next_obs_seq.mutable_data(), result.next_obs_seq.data(), B * L * O * sizeof(float));
+            std::memcpy(action_seq.mutable_data(), result.action_seq.data(), B * L * A * sizeof(float));
+            std::memcpy(masks.mutable_data(), result.masks.data(), B * L * sizeof(float));
+            std::memcpy(start_indices.mutable_data(), result.start_indices.data(), B * sizeof(size_t));
+            
+            float* rPtr = rewards.mutable_data();
+            float* dPtr = dones.mutable_data();
+            for (size_t i = 0; i < result.batch_size; ++i) {
+                rPtr[i] = result.rewards[i];
+                dPtr[i] = result.dones[i];
+            }
+            
+            py::array_t<float> actions({B, A});
+            float* aPtr = actions.mutable_data();
+            float* seqPtr = action_seq.mutable_data();
+            for (size_t b = 0; b < result.batch_size; ++b) {
+                std::memcpy(aPtr + b * A, seqPtr + (b * L + L - 1) * A, A * sizeof(float));
+            }
+            
+            py::dict ret;
+            ret["obs_seq"] = obs_seq;
+            ret["next_obs_seq"] = next_obs_seq;
+            ret["action_seq"] = action_seq;
+            ret["actions"] = actions;
+            ret["rewards"] = rewards;
+            ret["dones"] = dones;
+            ret["masks"] = masks;
+            ret["sequence_indices"] = start_indices;
+            return ret;
+        })
+        .def("size", &helix::SequenceReplayBuffer::size)
+        .def("is_ready", &helix::SequenceReplayBuffer::isReady)
+        .def("__len__", &helix::SequenceReplayBuffer::size);
+    
+    py::class_<helix::SequencePrioritizedReplayBuffer>(m, "SequencePrioritizedReplayBuffer")
+        .def(py::init<size_t, size_t, size_t, size_t, double, double, size_t, double>(),
+            py::arg("capacity"),
+            py::arg("obs_dim"),
+            py::arg("action_dim"),
+            py::arg("sequence_length"),
+            py::arg("alpha") = 0.6,
+            py::arg("beta_start") = 0.4,
+            py::arg("beta_frames") = 100000,
+            py::arg("epsilon") = 1e-6)
+        .def("beta", &helix::SequencePrioritizedReplayBuffer::beta)
+        .def("push", [](helix::SequencePrioritizedReplayBuffer& self,
+                        py::array_t<float, py::array::c_style | py::array::forcecast> obs,
+                        py::array_t<float, py::array::c_style | py::array::forcecast> action,
+                        float reward,
+                        py::array_t<float, py::array::c_style | py::array::forcecast> next_obs,
+                        float done) {
+            self.push(obs.data(), action.data(), reward, next_obs.data(), done);
+        })
+        .def("push_batch", [](helix::SequencePrioritizedReplayBuffer& self,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> obs,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> actions,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> rewards,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> next_obs,
+                              py::array_t<float, py::array::c_style | py::array::forcecast> dones) {
+            self.pushBatch(obs.data(), actions.data(), rewards.data(),
+                          next_obs.data(), dones.data(), static_cast<size_t>(obs.shape(0)));
+        })
+        .def("sample", [](helix::SequencePrioritizedReplayBuffer& self, size_t batchSize) {
+            auto result = self.sample(batchSize);
+            py::ssize_t B = static_cast<py::ssize_t>(result.batch_size);
+            py::ssize_t L = static_cast<py::ssize_t>(result.seq_len);
+            py::ssize_t O = static_cast<py::ssize_t>(result.obs_dim);
+            py::ssize_t A = static_cast<py::ssize_t>(result.action_dim);
+            
+            py::array_t<float> obs_seq({B, L, O});
+            py::array_t<float> next_obs_seq({B, L, O});
+            py::array_t<float> action_seq({B, L, A});
+            py::array_t<float> rewards({B, static_cast<py::ssize_t>(1)});
+            py::array_t<float> dones({B, static_cast<py::ssize_t>(1)});
+            py::array_t<float> masks({B, L});
+            py::array_t<float> weights({B, static_cast<py::ssize_t>(1)});
+            py::array_t<size_t> start_indices({B});
+            
+            std::memcpy(obs_seq.mutable_data(), result.obs_seq.data(), B * L * O * sizeof(float));
+            std::memcpy(next_obs_seq.mutable_data(), result.next_obs_seq.data(), B * L * O * sizeof(float));
+            std::memcpy(action_seq.mutable_data(), result.action_seq.data(), B * L * A * sizeof(float));
+            std::memcpy(masks.mutable_data(), result.masks.data(), B * L * sizeof(float));
+            std::memcpy(start_indices.mutable_data(), result.start_indices.data(), B * sizeof(size_t));
+            
+            float* rPtr = rewards.mutable_data();
+            float* dPtr = dones.mutable_data();
+            float* wPtr = weights.mutable_data();
+            for (size_t i = 0; i < result.batch_size; ++i) {
+                rPtr[i] = result.rewards[i];
+                dPtr[i] = result.dones[i];
+                wPtr[i] = result.weights[i];
+            }
+            
+            py::array_t<float> actions({B, A});
+            float* aPtr = actions.mutable_data();
+            float* seqPtr = action_seq.mutable_data();
+            for (size_t b = 0; b < result.batch_size; ++b) {
+                std::memcpy(aPtr + b * A, seqPtr + (b * L + L - 1) * A, A * sizeof(float));
+            }
+            
+            py::dict ret;
+            ret["obs_seq"] = obs_seq;
+            ret["next_obs_seq"] = next_obs_seq;
+            ret["action_seq"] = action_seq;
+            ret["actions"] = actions;
+            ret["rewards"] = rewards;
+            ret["dones"] = dones;
+            ret["masks"] = masks;
+            ret["weights"] = weights;
+            ret["sequence_indices"] = start_indices;
+            return ret;
+        })
+        .def("update_priorities", [](helix::SequencePrioritizedReplayBuffer& self,
+                                     py::array_t<size_t, py::array::c_style | py::array::forcecast> indices,
+                                     py::array_t<double, py::array::c_style | py::array::forcecast> td_errors) {
+            self.updatePriorities(indices.data(), td_errors.data(), static_cast<size_t>(indices.size()));
+        })
+        .def("size", &helix::SequencePrioritizedReplayBuffer::size)
+        .def("is_ready", &helix::SequencePrioritizedReplayBuffer::isReady)
+        .def("__len__", &helix::SequencePrioritizedReplayBuffer::size);
 }

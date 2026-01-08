@@ -351,6 +351,19 @@ class QuadrotorEnv(gym.Env):
             self._prev_action, action_history_flat, rpm_history_flat
         ]).astype(np.float32)
     
+    def _get_base_obs(self) -> np.ndarray:
+        s = self._drone.get_state()
+        
+        pos = np.array([s.position.x, s.position.y, s.position.z]) / self.config.position_scale
+        vel = np.array([s.velocity.x, s.velocity.y, s.velocity.z]) / self.config.velocity_scale
+        quat = np.array([s.orientation.w, s.orientation.x, s.orientation.y, s.orientation.z])
+        ang_vel = np.array([
+            s.angular_velocity.x, s.angular_velocity.y, s.angular_velocity.z
+        ]) / self.config.angular_velocity_scale
+        error = (self.target - np.array([s.position.x, s.position.y, s.position.z])) / self.config.position_scale
+        
+        return np.concatenate([pos, vel, quat, ang_vel, error, self._prev_action]).astype(np.float32)
+    
     def _compute_reward(self, action: np.ndarray) -> Tuple[float, bool]:
         s = self._drone.get_state()
         

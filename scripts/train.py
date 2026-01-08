@@ -15,7 +15,7 @@ from collections import deque
 import time
 
 from python_src.envs.drone_env import QuadrotorEnv, EnvConfig, TaskType, VectorizedQuadrotorEnv
-from python_src.agents import TD3Agent, DDPGAgent, CppPrioritizedReplayBuffer as PrioritizedReplayBuffer, ReplayBuffer, create_agent
+from python_src.agents import TD3Agent, DDPGAgent, TD3LSTMAgent, CppPrioritizedReplayBuffer as PrioritizedReplayBuffer, ReplayBuffer, CppSequenceReplayBuffer as SequenceReplayBuffer, CppSequencePrioritizedReplayBuffer as SequencePrioritizedReplayBuffer, create_agent
 from python_src.utils.helix_math import RunningMeanStd
 
 
@@ -64,6 +64,10 @@ class TrainConfig:
     resume_from: Optional[str] = None
     
     num_envs: int = 1
+    
+    lstm_hidden: int = 128
+    lstm_layers: int = 2
+    sequence_length: int = 16
 
 
 class RollingStats:
@@ -177,45 +181,96 @@ class Trainer:
             self.env = QuadrotorEnv(config=self.env_config, task=TaskType.HOVER)
             self.is_vectorized = False
         
-        self.eval_env = QuadrotorEnv(config=self.env_config, task=TaskType.HOVER)
+        # Create deterministic eval environment (no randomization)
+        from dataclasses import replace
+        eval_env_config = replace(
+            self.env_config,
+            domain_randomization=False,
+            wind_enabled=False,
+            curriculum_enabled=False
+        )
+        self.eval_env = QuadrotorEnv(config=eval_env_config, task=TaskType.HOVER)
         
         self.state_dim = self.env.observation_space.shape[0]
         self.action_dim = self.env.action_space.shape[0]
+        
+        self.use_lstm = self.config.agent_type.lower() == 'td3_lstm'
+        if self.use_lstm:
+            self.base_obs_dim = 20
     
     def _setup_agent(self):
-        self.agent = create_agent(
-            agent_type=self.config.agent_type,
-            state_dim=self.state_dim,
-            action_dim=self.action_dim,
-            device=self.device,
-            hidden_dim=self.config.hidden_dim,
-            lr_actor=self.config.lr_actor,
-            lr_critic=self.config.lr_critic,
-            gamma=self.config.gamma,
-            tau=self.config.tau,
-            policy_noise=self.config.policy_noise,
-            noise_clip=self.config.noise_clip,
-            policy_delay=self.config.policy_delay
-        )
-    
-    def _setup_buffer(self):
-        if self.config.use_per:
-            self.buffer = PrioritizedReplayBuffer(
-                capacity=self.config.buffer_size,
-                device=self.device,
-                state_dim=self.state_dim,
+        if self.use_lstm:
+            self.agent = TD3LSTMAgent(
+                obs_dim=self.base_obs_dim,
                 action_dim=self.action_dim,
-                alpha=self.config.per_alpha,
-                beta_start=self.config.per_beta_start,
-                beta_frames=self.config.total_timesteps
+                device=self.device,
+                hidden_dim=self.config.hidden_dim,
+                lstm_hidden=self.config.lstm_hidden,
+                lstm_layers=self.config.lstm_layers,
+                sequence_length=self.config.sequence_length,
+                lr_actor=self.config.lr_actor,
+                lr_critic=self.config.lr_critic,
+                gamma=self.config.gamma,
+                tau=self.config.tau,
+                policy_noise=self.config.policy_noise,
+                noise_clip=self.config.noise_clip,
+                policy_delay=self.config.policy_delay
             )
         else:
-            self.buffer = ReplayBuffer(
-                capacity=self.config.buffer_size,
-                device=self.device,
+            self.agent = create_agent(
+                agent_type=self.config.agent_type,
                 state_dim=self.state_dim,
-                action_dim=self.action_dim
+                action_dim=self.action_dim,
+                device=self.device,
+                hidden_dim=self.config.hidden_dim,
+                lr_actor=self.config.lr_actor,
+                lr_critic=self.config.lr_critic,
+                gamma=self.config.gamma,
+                tau=self.config.tau,
+                policy_noise=self.config.policy_noise,
+                noise_clip=self.config.noise_clip,
+                policy_delay=self.config.policy_delay
             )
+    
+    def _setup_buffer(self):
+        if self.use_lstm:
+            if self.config.use_per:
+                self.buffer = SequencePrioritizedReplayBuffer(
+                    capacity=self.config.buffer_size,
+                    device=self.device,
+                    obs_dim=self.base_obs_dim,
+                    action_dim=self.action_dim,
+                    sequence_length=self.config.sequence_length,
+                    alpha=self.config.per_alpha,
+                    beta_start=self.config.per_beta_start,
+                    beta_frames=self.config.total_timesteps
+                )
+            else:
+                self.buffer = SequenceReplayBuffer(
+                    capacity=self.config.buffer_size,
+                    device=self.device,
+                    obs_dim=self.base_obs_dim,
+                    action_dim=self.action_dim,
+                    sequence_length=self.config.sequence_length
+                )
+        else:
+            if self.config.use_per:
+                self.buffer = PrioritizedReplayBuffer(
+                    capacity=self.config.buffer_size,
+                    device=self.device,
+                    state_dim=self.state_dim,
+                    action_dim=self.action_dim,
+                    alpha=self.config.per_alpha,
+                    beta_start=self.config.per_beta_start,
+                    beta_frames=self.config.total_timesteps
+                )
+            else:
+                self.buffer = ReplayBuffer(
+                    capacity=self.config.buffer_size,
+                    device=self.device,
+                    state_dim=self.state_dim,
+                    action_dim=self.action_dim
+                )
     
     def _setup_normalization(self):
         if self.config.use_obs_normalization:
@@ -322,8 +377,12 @@ class Trainer:
             print(f"[WARMUP] Mean range: [{self.obs_normalizer.mean.min():.3f}, {self.obs_normalizer.mean.max():.3f}]")
             print(f"[WARMUP] Var range: [{self.obs_normalizer.var.min():.3f}, {self.obs_normalizer.var.max():.3f}]")
         
-        obs, _ = self.env.reset(seed=self.config.seed)
-        obs = self._normalize_obs(obs, update=True)
+        obs_raw, _ = self.env.reset(seed=self.config.seed)
+        obs = self._normalize_obs(obs_raw, update=True)
+        
+        if self.use_lstm:
+            obs_base = self.env._get_base_obs() if hasattr(self.env, '_get_base_obs') else obs_raw[:self.base_obs_dim]
+            self.agent.reset_hidden_states()
         
         episode_reward = 0.0 if not self.is_vectorized else np.zeros(self.config.num_envs)
         episode_length = 0 if not self.is_vectorized else np.zeros(self.config.num_envs, dtype=int)
@@ -338,22 +397,42 @@ class Trainer:
             else:
                 noise_scale = self.exploration.noise
                 if self.is_vectorized:
-                    action = self.agent.get_actions_batch(obs, add_noise=True, noise_scale=noise_scale)
+                    if self.use_lstm:
+                        obs_base_batch = obs[:, :self.base_obs_dim]
+                        action = self.agent.get_actions_batch(obs_base_batch, add_noise=True, noise_scale=noise_scale)
+                    else:
+                        action = self.agent.get_actions_batch(obs, add_noise=True, noise_scale=noise_scale)
                 else:
-                    action = self._get_action_with_noise(obs, noise_scale)
+                    if self.use_lstm:
+                        obs_base = self.env._get_base_obs()
+                        action = self.agent.get_action(obs_base, add_noise=True)
+                    else:
+                        action = self._get_action_with_noise(obs, noise_scale)
             
             next_obs_raw, reward, terminated, truncated, info = self.env.step(action)
             next_obs = self._normalize_obs(next_obs_raw, update=True)
             
             if self.is_vectorized:
-                self.buffer.push_batch(
-                    states=obs if obs.ndim == 2 else obs.reshape(1, -1),
-                    actions=action if action.ndim == 2 else action.reshape(1, -1),
-                    rewards=reward if isinstance(reward, np.ndarray) else np.array([reward]),
-                    next_states=next_obs if next_obs.ndim == 2 else next_obs.reshape(1, -1),
-                    dones=terminated if isinstance(terminated, np.ndarray) else np.array([terminated])
-                )
+                if self.use_lstm:
+                    obs_base_batch = obs[:, :self.base_obs_dim]
+                    next_obs_base_batch = next_obs_raw[:, :self.base_obs_dim]
+                    self.buffer.push_batch(
+                        states=obs_base_batch,
+                        actions=action,
+                        rewards=reward,
+                        next_states=next_obs_base_batch,
+                        dones=terminated
+                    )
+                else:
+                    self.buffer.push_batch(
+                        states=obs if obs.ndim == 2 else obs.reshape(1, -1),
+                        actions=action if action.ndim == 2 else action.reshape(1, -1),
+                        rewards=reward if isinstance(reward, np.ndarray) else np.array([reward]),
+                        next_states=next_obs if next_obs.ndim == 2 else next_obs.reshape(1, -1),
+                        dones=terminated if isinstance(terminated, np.ndarray) else np.array([terminated])
+                    )
                 
+                done_envs = []
                 for i in range(self.config.num_envs):
                     episode_reward[i] += reward[i]
                     episode_length[i] += 1
@@ -364,13 +443,24 @@ class Trainer:
                         self.stats.add(episode_reward[i], episode_length[i])
                         history['rewards'].append(episode_reward[i])
                         self.episodes += 1
+                        done_envs.append(i)
                         episode_reward[i] = 0.0
                         episode_length[i] = 0
+                
+                if self.use_lstm and done_envs:
+                    self.agent.reset_hidden_states(np.array(done_envs))
                 
                 self.timesteps += self.config.num_envs
             else:
                 done = terminated or truncated
-                self.buffer.push(obs, action, reward, next_obs, terminated)
+                
+                if self.use_lstm:
+                    obs_base = self.env._get_base_obs() if hasattr(self.env, '_get_base_obs') else obs[:self.base_obs_dim]
+                    next_obs_base = self.env._get_base_obs() if hasattr(self.env, '_get_base_obs') else next_obs_raw[:self.base_obs_dim]
+                    self.buffer.push(obs_base, action, reward, next_obs_base, terminated)
+                else:
+                    self.buffer.push(obs, action, reward, next_obs, terminated)
+                    
                 episode_reward += reward
                 episode_length += 1
                 self.timesteps += 1
@@ -383,6 +473,9 @@ class Trainer:
                     self.episodes += 1
                     obs_raw, _ = self.env.reset()
                     obs = self._normalize_obs(obs_raw, update=True)
+                    if self.use_lstm:
+                        obs_base = self.env._get_base_obs() if hasattr(self.env, '_get_base_obs') else obs_raw[:self.base_obs_dim]
+                        self.agent.reset_hidden_states()
                     episode_reward = 0.0
                     episode_length = 0
                     self.agent.reset_noise()
@@ -427,21 +520,35 @@ class Trainer:
     
     def _evaluate(self) -> float:
         total_reward = 0.0
+        total_length = 0
         
         for _ in range(self.config.eval_episodes):
             obs_raw, _ = self.eval_env.reset()
             obs = self._normalize_obs(obs_raw, update=False)
             done = False
+            ep_length = 0
+            
+            if self.use_lstm:
+                self.agent.reset_hidden_states()
             
             while not done:
-                action = self.agent.get_action(obs, add_noise=False)
+                if self.use_lstm:
+                    obs_base = self.eval_env._get_base_obs()
+                    action = self.agent.get_action(obs_base, add_noise=False)
+                else:
+                    action = self.agent.get_action(obs, add_noise=False)
+                
                 obs_raw, reward, terminated, truncated, _ = self.eval_env.step(action)
                 obs = self._normalize_obs(obs_raw, update=False)
                 total_reward += reward
+                ep_length += 1
                 done = terminated or truncated
+            
+            total_length += ep_length
         
         mean_reward = total_reward / self.config.eval_episodes
-        print(f"[EVAL] Steps: {self.timesteps} | Mean Reward: {mean_reward:.2f}")
+        mean_length = total_length / self.config.eval_episodes
+        print(f"[EVAL] Steps: {self.timesteps} | Mean Reward: {mean_reward:.2f} | Mean Length: {mean_length:.0f}")
         return mean_reward
     
     def _log_progress(self):

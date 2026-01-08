@@ -7,6 +7,11 @@ cpp_sources = [
     "cpp_core/src/bindings.cpp",
     "cpp_core/src/Quadrotor.cpp",
     "cpp_core/src/PhysicsEngine.cpp",
+    "cpp_core/src/SOTAActuator.cpp",
+    "cpp_core/src/StateEstimator.cpp",
+    "cpp_core/src/ActuatorFailure.cpp",
+    "cpp_core/src/CollisionWorld.cpp",
+    "cpp_core/src/PayloadDynamics.cpp",
 ]
 
 # Definir la extensión

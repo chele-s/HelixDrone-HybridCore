@@ -11,6 +11,14 @@ td3_specific:
   noise_clip: 0.4
   policy_delay: 2
 
+lstm:
+  enabled: true
+  hidden_dim: 128
+  num_layers: 2
+  sequence_length: 16
+  use_layer_norm: true
+  dropout: 0.0
+
 exploration:
   noise: 0.25
   noise_decay: 0.99998

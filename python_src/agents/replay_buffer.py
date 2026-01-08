@@ -414,8 +414,10 @@ class NStepReplayBuffer:
 try:
     import drone_core as _cpp_core
     _HAS_CPP_BUFFER = hasattr(_cpp_core, 'PrioritizedReplayBuffer')
+    _HAS_CPP_SEQ_BUFFER = hasattr(_cpp_core, 'SequenceReplayBuffer')
 except ImportError:
     _HAS_CPP_BUFFER = False
+    _HAS_CPP_SEQ_BUFFER = False
 
 
 class CppPrioritizedReplayBuffer:
@@ -529,3 +531,489 @@ class CppPrioritizedReplayBuffer:
     @property
     def using_cpp(self) -> bool:
         return self._use_cpp
+
+
+class CppSequenceReplayBuffer:
+    def __init__(
+        self,
+        capacity: int,
+        device: torch.device,
+        obs_dim: int,
+        action_dim: int,
+        sequence_length: int = 16
+    ):
+        self.device = device
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.sequence_length = sequence_length
+        
+        if _HAS_CPP_SEQ_BUFFER:
+            self._cpp = _cpp_core.SequenceReplayBuffer(capacity, obs_dim, action_dim, sequence_length)
+            self._use_cpp = True
+        else:
+            self._py = SequenceReplayBuffer(capacity, device, obs_dim, action_dim, sequence_length)
+            self._use_cpp = False
+    
+    def push(self, obs: np.ndarray, action: np.ndarray, reward: float, 
+             next_obs: np.ndarray, done: bool) -> None:
+        if self._use_cpp:
+            self._cpp.push(obs.astype(np.float32), action.astype(np.float32), 
+                          float(reward), next_obs.astype(np.float32), float(done))
+        else:
+            self._py.push(obs, action, reward, next_obs, done)
+    
+    def push_batch(self, states: np.ndarray, actions: np.ndarray, rewards: np.ndarray,
+                   next_states: np.ndarray, dones: np.ndarray) -> None:
+        if self._use_cpp:
+            self._cpp.push_batch(states.astype(np.float32), actions.astype(np.float32),
+                                rewards.astype(np.float32).flatten(), next_states.astype(np.float32),
+                                dones.astype(np.float32).flatten())
+        else:
+            self._py.push_batch(states, actions, rewards, next_states, dones)
+    
+    def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
+        if self._use_cpp:
+            result = self._cpp.sample(batch_size)
+            return {
+                'obs_seq': torch.as_tensor(result['obs_seq'], dtype=torch.float32, device=self.device),
+                'next_obs_seq': torch.as_tensor(result['next_obs_seq'], dtype=torch.float32, device=self.device),
+                'action_seq': torch.as_tensor(result['action_seq'], dtype=torch.float32, device=self.device),
+                'actions': torch.as_tensor(result['actions'], dtype=torch.float32, device=self.device),
+                'rewards': torch.as_tensor(result['rewards'], dtype=torch.float32, device=self.device),
+                'dones': torch.as_tensor(result['dones'], dtype=torch.float32, device=self.device),
+                'masks': torch.as_tensor(result['masks'], dtype=torch.float32, device=self.device)
+            }
+        return self._py.sample(batch_size)
+    
+    def __len__(self) -> int:
+        return self._cpp.size() if self._use_cpp else len(self._py)
+    
+    def is_ready(self, batch_size: int) -> bool:
+        return self._cpp.is_ready(batch_size) if self._use_cpp else self._py.is_ready(batch_size)
+    
+    @property
+    def using_cpp(self) -> bool:
+        return self._use_cpp
+
+
+class CppSequencePrioritizedReplayBuffer:
+    def __init__(
+        self,
+        capacity: int,
+        device: torch.device,
+        obs_dim: int,
+        action_dim: int,
+        sequence_length: int = 16,
+        alpha: float = 0.6,
+        beta_start: float = 0.4,
+        beta_frames: int = 100000,
+        epsilon: float = 1e-6
+    ):
+        self.device = device
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.sequence_length = sequence_length
+        
+        if _HAS_CPP_SEQ_BUFFER:
+            self._cpp = _cpp_core.SequencePrioritizedReplayBuffer(
+                capacity, obs_dim, action_dim, sequence_length, alpha, beta_start, beta_frames, epsilon)
+            self._use_cpp = True
+        else:
+            self._py = SequencePrioritizedReplayBuffer(
+                capacity, device, obs_dim, action_dim, sequence_length, alpha, beta_start, beta_frames, epsilon)
+            self._use_cpp = False
+    
+    def push(self, obs: np.ndarray, action: np.ndarray, reward: float,
+             next_obs: np.ndarray, done: bool) -> None:
+        if self._use_cpp:
+            self._cpp.push(obs.astype(np.float32), action.astype(np.float32),
+                          float(reward), next_obs.astype(np.float32), float(done))
+        else:
+            self._py.push(obs, action, reward, next_obs, done)
+    
+    def push_batch(self, states: np.ndarray, actions: np.ndarray, rewards: np.ndarray,
+                   next_states: np.ndarray, dones: np.ndarray) -> None:
+        if self._use_cpp:
+            self._cpp.push_batch(states.astype(np.float32), actions.astype(np.float32),
+                                rewards.astype(np.float32).flatten(), next_states.astype(np.float32),
+                                dones.astype(np.float32).flatten())
+        else:
+            self._py.push_batch(states, actions, rewards, next_states, dones)
+    
+    def sample(self, batch_size: int) -> Dict[str, Any]:
+        if self._use_cpp:
+            result = self._cpp.sample(batch_size)
+            return {
+                'obs_seq': torch.as_tensor(result['obs_seq'], dtype=torch.float32, device=self.device),
+                'next_obs_seq': torch.as_tensor(result['next_obs_seq'], dtype=torch.float32, device=self.device),
+                'action_seq': torch.as_tensor(result['action_seq'], dtype=torch.float32, device=self.device),
+                'actions': torch.as_tensor(result['actions'], dtype=torch.float32, device=self.device),
+                'rewards': torch.as_tensor(result['rewards'], dtype=torch.float32, device=self.device),
+                'dones': torch.as_tensor(result['dones'], dtype=torch.float32, device=self.device),
+                'masks': torch.as_tensor(result['masks'], dtype=torch.float32, device=self.device),
+                'weights': torch.as_tensor(result['weights'], dtype=torch.float32, device=self.device),
+                'sequence_indices': result['sequence_indices'].astype(np.int64)
+            }
+        return self._py.sample(batch_size)
+    
+    def update_priorities(self, sequence_indices: np.ndarray, td_errors: np.ndarray) -> None:
+        if self._use_cpp:
+            self._cpp.update_priorities(sequence_indices.astype(np.uint64), td_errors.astype(np.float64))
+        else:
+            self._py.update_priorities(sequence_indices, td_errors)
+    
+    def __len__(self) -> int:
+        return self._cpp.size() if self._use_cpp else len(self._py)
+    
+    def is_ready(self, batch_size: int) -> bool:
+        return self._cpp.is_ready(batch_size) if self._use_cpp else self._py.is_ready(batch_size)
+    
+    @property
+    def using_cpp(self) -> bool:
+        return self._use_cpp
+
+
+class SequenceReplayBuffer:
+    def __init__(
+        self,
+        capacity: int,
+        device: torch.device,
+        obs_dim: int,
+        action_dim: int,
+        sequence_length: int = 16
+    ):
+        self.capacity = capacity
+        self.device = device
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.sequence_length = sequence_length
+        
+        self.observations = np.zeros((capacity, obs_dim), dtype=np.float32)
+        self.actions = np.zeros((capacity, action_dim), dtype=np.float32)
+        self.rewards = np.zeros((capacity,), dtype=np.float32)
+        self.next_observations = np.zeros((capacity, obs_dim), dtype=np.float32)
+        self.dones = np.zeros((capacity,), dtype=np.float32)
+        self.episode_ids = np.zeros((capacity,), dtype=np.int64)
+        
+        self.ptr = 0
+        self.size = 0
+        self.current_episode_id = 0
+        self.valid_mask = np.zeros(capacity, dtype=bool)
+    
+    def push(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool
+    ) -> None:
+        self.observations[self.ptr] = obs
+        self.actions[self.ptr] = action
+        self.rewards[self.ptr] = reward
+        self.next_observations[self.ptr] = next_obs
+        self.dones[self.ptr] = float(done)
+        self.episode_ids[self.ptr] = self.current_episode_id
+        
+        self._update_validity(self.ptr)
+        
+        self.ptr = (self.ptr + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
+        
+        if done:
+            self.current_episode_id += 1
+    
+    def push_episode(self, episode_data: Dict[str, np.ndarray]) -> None:
+        obs_seq = episode_data['observations']
+        actions_seq = episode_data['actions']
+        rewards_seq = episode_data['rewards']
+        next_obs_seq = episode_data['next_observations']
+        dones_seq = episode_data['dones']
+        
+        for i in range(len(obs_seq)):
+            self.push(
+                obs_seq[i],
+                actions_seq[i],
+                rewards_seq[i],
+                next_obs_seq[i],
+                bool(dones_seq[i])
+            )
+    
+    def push_batch(
+        self,
+        states: np.ndarray,
+        actions: np.ndarray,
+        rewards: np.ndarray,
+        next_states: np.ndarray,
+        dones: np.ndarray
+    ) -> None:
+        batch_size = states.shape[0]
+        for i in range(batch_size):
+            self.push(
+                states[i],
+                actions[i],
+                float(rewards[i]) if rewards.ndim > 0 else float(rewards),
+                next_states[i],
+                bool(dones[i]) if dones.ndim > 0 else bool(dones)
+            )
+    
+    def _update_validity(self, ptr: int):
+        
+        indices = (ptr - np.arange(self.sequence_length)[::-1]) % self.capacity
+        
+        for start_idx in indices:
+            self.valid_mask[start_idx] = False
+            
+            end_idx = (start_idx + self.sequence_length - 1) % self.capacity
+            if self.episode_ids[start_idx] != self.episode_ids[end_idx]:
+                continue
+                
+            check_indices = (start_idx + np.arange(self.sequence_length - 1)) % self.capacity
+            if np.any(self.dones[check_indices] > 0.5):
+                continue
+            
+            # Additional check: circular buffer overflow prevention (old vs new data)
+            # The ptr (where we just wrote) is the newest data.
+            # If a sequence that supposedly starts at 'start_idx' wraps around
+            # and includes 'ptr' as an "old" data point, it's invalid.
+            # But here `ptr` is the LATEST data point.
+            # A sequence starting at `start_idx` ends at `start_idx + L - 1`.
+            # If `ptr` is inside `[start_idx, start_idx + L - 1]`, then `ptr` is part of this sequence.
+            # Since `ptr` is the newest, `start_idx` must be `<= ptr`.
+            # If `start_idx > ptr`, it means `start_idx` is old data, and it wraps around to `ptr`.
+            # But `episode_ids` would catch this because `ptr` (new) has higher episode_id than `start_idx` (old).
+            # So `episode_ids` check is sufficient.
+            
+            self.valid_mask[start_idx] = True
+
+    def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
+        valid_starts = np.where(self.valid_mask)[0]
+        
+        if len(valid_starts) < batch_size:
+            if len(valid_starts) == 0:
+                raise ValueError("Not enough valid sequences in buffer")
+            indices = np.random.choice(valid_starts, size=batch_size, replace=True)
+        else:
+            indices = np.random.choice(valid_starts, size=batch_size, replace=False)
+        
+        seq_indices = (indices[:, None] + np.arange(self.sequence_length)) % self.capacity
+        
+        obs_sequences = self.observations[seq_indices]
+        next_obs_sequences = self.next_observations[seq_indices]
+        action_sequences = self.actions[seq_indices]
+        reward_sequences = self.rewards[seq_indices]
+        done_sequences = self.dones[seq_indices]
+        masks = np.ones((batch_size, self.sequence_length), dtype=np.float32)
+        
+        return {
+            'obs_seq': torch.as_tensor(obs_sequences, dtype=torch.float32, device=self.device),
+            'next_obs_seq': torch.as_tensor(next_obs_sequences, dtype=torch.float32, device=self.device),
+            'action_seq': torch.as_tensor(action_sequences, dtype=torch.float32, device=self.device),
+            'actions': torch.as_tensor(action_sequences[:, -1, :], dtype=torch.float32, device=self.device),
+            'rewards': torch.as_tensor(reward_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'dones': torch.as_tensor(done_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'masks': torch.as_tensor(masks, dtype=torch.float32, device=self.device)
+        }
+    
+    def __len__(self) -> int:
+        return self.size
+    
+    def is_ready(self, batch_size: int) -> bool:
+        return self.valid_mask.sum() >= batch_size
+
+
+class SequencePrioritizedReplayBuffer:
+    def __init__(
+        self,
+        capacity: int,
+        device: torch.device,
+        obs_dim: int,
+        action_dim: int,
+        sequence_length: int = 16,
+        alpha: float = 0.6,
+        beta_start: float = 0.4,
+        beta_frames: int = 100000,
+        epsilon: float = 1e-6
+    ):
+        self.capacity = capacity
+        self.device = device
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.sequence_length = sequence_length
+        self.alpha = alpha
+        self.beta_start = beta_start
+        self.beta_frames = beta_frames
+        self.epsilon = epsilon
+        self.frame = 1
+        
+        self.observations = np.zeros((capacity, obs_dim), dtype=np.float32)
+        self.actions = np.zeros((capacity, action_dim), dtype=np.float32)
+        self.rewards = np.zeros((capacity,), dtype=np.float32)
+        self.next_observations = np.zeros((capacity, obs_dim), dtype=np.float32)
+        self.dones = np.zeros((capacity,), dtype=np.float32)
+        self.episode_ids = np.zeros((capacity,), dtype=np.int64)
+        
+        self.priorities = np.zeros((capacity,), dtype=np.float64)
+        self.max_priority = 1.0
+        
+        self.ptr = 0
+        self.size = 0
+        self.current_episode_id = 0
+        self.valid_mask = np.zeros(capacity, dtype=bool)
+    
+    @property
+    def beta(self) -> float:
+        return min(1.0, self.beta_start + (1.0 - self.beta_start) * self.frame / self.beta_frames)
+    
+    def push(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: float,
+        next_obs: np.ndarray,
+        done: bool
+    ) -> None:
+        self.observations[self.ptr] = obs
+        self.actions[self.ptr] = action
+        self.rewards[self.ptr] = reward
+        self.next_observations[self.ptr] = next_obs
+        self.dones[self.ptr] = float(done)
+        self.episode_ids[self.ptr] = self.current_episode_id
+        self.priorities[self.ptr] = self.max_priority ** self.alpha
+        
+        self._update_validity(self.ptr)
+        
+        self.ptr = (self.ptr + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
+        
+        if done:
+            self.current_episode_id += 1
+    
+    def push_episode(self, episode_data: Dict[str, np.ndarray]) -> None:
+        obs_seq = episode_data['observations']
+        actions_seq = episode_data['actions']
+        rewards_seq = episode_data['rewards']
+        next_obs_seq = episode_data['next_observations']
+        dones_seq = episode_data['dones']
+        
+        for i in range(len(obs_seq)):
+            self.push(
+                obs_seq[i],
+                actions_seq[i],
+                rewards_seq[i],
+                next_obs_seq[i],
+                bool(dones_seq[i])
+            )
+    
+    def push_batch(
+        self,
+        states: np.ndarray,
+        actions: np.ndarray,
+        rewards: np.ndarray,
+        next_states: np.ndarray,
+        dones: np.ndarray
+    ) -> None:
+        batch_size = states.shape[0]
+        for i in range(batch_size):
+            self.push(
+                states[i],
+                actions[i],
+                float(rewards[i]) if rewards.ndim > 0 else float(rewards),
+                next_states[i],
+                bool(dones[i]) if dones.ndim > 0 else bool(dones)
+            )
+    
+    def _update_validity(self, ptr: int):
+        
+        indices = (ptr - np.arange(self.sequence_length)[::-1]) % self.capacity
+        
+        for start_idx in indices:
+            self.valid_mask[start_idx] = False
+            
+            end_idx = (start_idx + self.sequence_length - 1) % self.capacity
+            if self.episode_ids[start_idx] != self.episode_ids[end_idx]:
+                continue
+                
+            check_indices = (start_idx + np.arange(self.sequence_length - 1)) % self.capacity
+            if np.any(self.dones[check_indices] > 0.5):
+                continue
+            
+            self.valid_mask[start_idx] = True
+
+    def sample(self, batch_size: int) -> Dict[str, Any]:
+        valid_starts = np.where(self.valid_mask)[0]
+        
+        if len(valid_starts) == 0:
+            raise ValueError("Not enough valid sequences in buffer")
+        
+        start_matrix = valid_starts[:, None] + np.arange(self.sequence_length)
+        start_matrix %= self.capacity
+        
+        seq_priorities = self.priorities[start_matrix]
+        mean_priorities = seq_priorities.mean(axis=1)
+        
+        total_priority = mean_priorities.sum()
+        if total_priority <= 0:
+            probabilities = np.ones(len(valid_starts)) / len(valid_starts)
+        else:
+            probabilities = mean_priorities / total_priority
+            
+        if len(valid_starts) < batch_size:
+            selected_indices = np.random.choice(
+                len(valid_starts), size=batch_size, replace=True, p=probabilities
+            )
+        else:
+            selected_indices = np.random.choice(
+                len(valid_starts), size=batch_size, replace=False, p=probabilities
+            )
+            
+        start_indices = valid_starts[selected_indices]
+        selected_priorities = mean_priorities[selected_indices]
+        
+        weights = (self.size * (selected_priorities / total_priority + 1e-10)) ** (-self.beta)
+        weights = weights / (weights.max() + 1e-10)
+        
+        self.frame += 1
+        
+        seq_indices = (start_indices[:, None] + np.arange(self.sequence_length)) % self.capacity
+        
+        obs_sequences = self.observations[seq_indices]
+        next_obs_sequences = self.next_observations[seq_indices]
+        action_sequences = self.actions[seq_indices]
+        reward_sequences = self.rewards[seq_indices]
+        done_sequences = self.dones[seq_indices]
+        masks = np.ones((batch_size, self.sequence_length), dtype=np.float32)
+        
+        return {
+            'obs_seq': torch.as_tensor(obs_sequences, dtype=torch.float32, device=self.device),
+            'next_obs_seq': torch.as_tensor(next_obs_sequences, dtype=torch.float32, device=self.device),
+            'action_seq': torch.as_tensor(action_sequences, dtype=torch.float32, device=self.device),
+            'actions': torch.as_tensor(action_sequences[:, -1, :], dtype=torch.float32, device=self.device),
+            'rewards': torch.as_tensor(reward_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'dones': torch.as_tensor(done_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'masks': torch.as_tensor(masks, dtype=torch.float32, device=self.device),
+            'weights': torch.as_tensor(weights, dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'sequence_indices': start_indices
+        }
+    
+    def update_priorities(
+        self,
+        sequence_indices: np.ndarray,
+        td_errors: np.ndarray
+    ) -> None:
+        priorities = (np.abs(td_errors) + self.epsilon) ** self.alpha
+        
+        indices = (sequence_indices[:, None] + np.arange(self.sequence_length)) % self.capacity
+        priorities_expanded = np.tile(priorities[:, None], (1, self.sequence_length))
+        
+        flat_indices = indices.flatten()
+        flat_priorities = priorities_expanded.flatten()
+        
+        self.priorities[flat_indices] = flat_priorities
+        self.max_priority = max(self.max_priority, priorities.max())
+    
+    def __len__(self) -> int:
+        return self.size
+    
+    def is_ready(self, batch_size: int) -> bool:
+        return self.valid_mask.sum() >= batch_size

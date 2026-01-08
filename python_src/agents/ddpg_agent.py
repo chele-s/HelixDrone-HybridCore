@@ -7,8 +7,8 @@ from typing import Optional, Tuple, Dict, Any, Union
 from pathlib import Path
 import copy
 
-from .networks import Actor, Critic, DeepActor
-from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer, CppPrioritizedReplayBuffer
+from .networks import Actor, Critic, DeepActor, LSTMActor, LSTMCritic
+from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer, CppPrioritizedReplayBuffer, SequenceReplayBuffer, SequencePrioritizedReplayBuffer
 
 
 class OUNoise:
@@ -443,16 +443,357 @@ class TD3Agent:
         }
 
 
+class TD3LSTMAgent:
+    def __init__(
+        self,
+        obs_dim: int,
+        action_dim: int,
+        device: torch.device,
+        hidden_dim: int = 256,
+        lstm_hidden: int = 128,
+        lstm_layers: int = 2,
+        sequence_length: int = 16,
+        lr_actor: float = 3e-4,
+        lr_critic: float = 3e-4,
+        gamma: float = 0.99,
+        tau: float = 0.005,
+        max_action: float = 1.0,
+        policy_noise: float = 0.2,
+        noise_clip: float = 0.5,
+        policy_delay: int = 2,
+        gradient_clip: float = 1.0,
+        use_amp: bool = True,
+        compile_networks: bool = True
+    ):
+        self.device = device
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.hidden_dim = hidden_dim
+        self.lstm_hidden = lstm_hidden
+        self.lstm_layers = lstm_layers
+        self.sequence_length = sequence_length
+        self.gamma = gamma
+        self.tau = tau
+        self.max_action = max_action
+        self.policy_noise = policy_noise
+        self.noise_clip = noise_clip
+        self.policy_delay = policy_delay
+        self.gradient_clip = gradient_clip
+        self.use_amp = use_amp and device.type == 'cuda'
+        
+        self.actor = LSTMActor(
+            obs_dim, action_dim, hidden_dim, lstm_hidden, lstm_layers, max_action
+        ).to(device)
+        self.actor_target = copy.deepcopy(self.actor)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor)
+        
+        self.critic = LSTMCritic(
+            obs_dim, action_dim, hidden_dim, lstm_hidden, lstm_layers
+        ).to(device)
+        self.critic_target = copy.deepcopy(self.critic)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr_critic)
+        
+        import sys as _sys
+        _is_linux_cuda = device.type == 'cuda' and not _sys.platform.startswith('win')
+        if compile_networks and _is_linux_cuda and hasattr(torch, 'compile'):
+            try:
+                self.actor = torch.compile(self.actor, mode='reduce-overhead')
+                self.actor_target = torch.compile(self.actor_target, mode='reduce-overhead')
+                self.critic = torch.compile(self.critic, mode='reduce-overhead')
+                self.critic_target = torch.compile(self.critic_target, mode='reduce-overhead')
+            except Exception:
+                pass
+        
+        for param in self.actor_target.parameters():
+            param.requires_grad = False
+        for param in self.critic_target.parameters():
+            param.requires_grad = False
+        
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp)
+        
+        self.exploration_noise = GaussianNoise(action_dim, sigma=0.1)
+        
+        self._num_envs = 1
+        self._obs_buffers = None
+        self._obs_buffer_ptrs = None
+        self._obs_buffers_full = None
+        self._actor_hidden = None
+        
+        self._train_steps = 0
+        self._actor_loss = 0.0
+        self._critic_loss = 0.0
+        
+        self.use_lstm = True
+    
+    def init_vectorized(self, num_envs: int) -> None:
+        self._num_envs = num_envs
+        self._obs_buffers = np.zeros((num_envs, self.sequence_length, self.obs_dim), dtype=np.float32)
+        self._obs_buffer_ptrs = np.zeros(num_envs, dtype=np.int32)
+        self._obs_buffers_full = np.zeros(num_envs, dtype=bool)
+        self._actor_hidden = None
+    
+    def reset_hidden_states(self, env_indices: Optional[Union[int, np.ndarray]] = None) -> None:
+        if self._num_envs == 1 or env_indices is None:
+            self._obs_buffers = np.zeros((self._num_envs, self.sequence_length, self.obs_dim), dtype=np.float32) if self._num_envs > 1 else None
+            self._obs_buffer_ptrs = np.zeros(self._num_envs, dtype=np.int32) if self._num_envs > 1 else None
+            self._obs_buffers_full = np.zeros(self._num_envs, dtype=bool) if self._num_envs > 1 else None
+            self._actor_hidden = None
+            self._single_obs_buffer = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
+            self._single_obs_ptr = 0
+            self._single_obs_full = False
+        else:
+            if isinstance(env_indices, int):
+                env_indices = [env_indices]
+            for idx in env_indices:
+                self._obs_buffers[idx] = 0.0
+                self._obs_buffer_ptrs[idx] = 0
+                self._obs_buffers_full[idx] = False
+    
+    def _update_obs_buffer_single(self, obs: np.ndarray) -> np.ndarray:
+        if not hasattr(self, '_single_obs_buffer'):
+            self._single_obs_buffer = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
+            self._single_obs_ptr = 0
+            self._single_obs_full = False
+        
+        self._single_obs_buffer[self._single_obs_ptr] = obs
+        self._single_obs_ptr = (self._single_obs_ptr + 1) % self.sequence_length
+        
+        if self._single_obs_ptr == 0:
+            self._single_obs_full = True
+        
+        if self._single_obs_full:
+            indices = [(self._single_obs_ptr + i) % self.sequence_length for i in range(self.sequence_length)]
+            return self._single_obs_buffer[indices]
+        else:
+            result = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
+            for i in range(self._single_obs_ptr):
+                result[self.sequence_length - self._single_obs_ptr + i] = self._single_obs_buffer[i]
+            return result
+    
+    def _update_obs_buffers_batch(self, obs_batch: np.ndarray) -> np.ndarray:
+        batch_size = obs_batch.shape[0]
+        
+        ptrs = self._obs_buffer_ptrs
+        self._obs_buffers[np.arange(batch_size), ptrs] = obs_batch
+        
+        new_ptrs = (ptrs + 1) % self.sequence_length
+        self._obs_buffers_full |= (new_ptrs == 0)
+        self._obs_buffer_ptrs = new_ptrs
+        
+        indices = (ptrs[:, None] + 1 + np.arange(self.sequence_length)) % self.sequence_length
+        sequences = self._obs_buffers[np.arange(batch_size)[:, None], indices]
+        
+        masks = ~self._obs_buffers_full
+        if masks.any():
+            for i in np.where(masks)[0]:
+                valid_count = new_ptrs[i]
+                if valid_count > 0:
+                    sequences[i, :self.sequence_length - valid_count] = 0.0
+        
+        return sequences
+    
+    def get_action(
+        self,
+        obs: np.ndarray,
+        add_noise: bool = True,
+        reset_hidden: bool = False
+    ) -> np.ndarray:
+        if reset_hidden:
+            self.reset_hidden_states()
+        
+        obs_seq = self._update_obs_buffer_single(obs)
+        
+        with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
+            obs_tensor = torch.as_tensor(
+                obs_seq, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
+            
+            action, self._actor_hidden = self.actor(obs_tensor, self._actor_hidden)
+            action = action.cpu().numpy()[0]
+        
+        if add_noise:
+            noise = self.exploration_noise.sample()
+            action = action + noise
+        
+        return np.clip(action, -self.max_action, self.max_action)
+    
+    def get_actions_batch(
+        self,
+        obs_batch: np.ndarray,
+        add_noise: bool = True,
+        noise_scale: float = 1.0
+    ) -> np.ndarray:
+        if self._obs_buffers is None or self._obs_buffers.shape[0] != obs_batch.shape[0]:
+            self.init_vectorized(obs_batch.shape[0])
+        
+        obs_sequences = self._update_obs_buffers_batch(obs_batch)
+        
+        with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
+            obs_tensor = torch.as_tensor(
+                obs_sequences, dtype=torch.float32, device=self.device
+            )
+            actions, _ = self.actor(obs_tensor, None)
+            actions = actions.cpu().numpy()
+        
+        if add_noise and noise_scale > 0:
+            noise = np.random.randn(*actions.shape) * noise_scale
+            actions = actions + noise
+        
+        return np.clip(actions, -self.max_action, self.max_action)
+    
+    def update(
+        self,
+        replay_buffer: Union[SequenceReplayBuffer, SequencePrioritizedReplayBuffer],
+        batch_size: int = 256
+    ) -> Dict[str, float]:
+        if not replay_buffer.is_ready(batch_size):
+            return {}
+        
+        self._train_steps += 1
+        
+        batch = replay_buffer.sample(batch_size)
+        
+        obs_seq = batch['obs_seq']
+        next_obs_seq = batch['next_obs_seq']
+        actions = batch['actions']
+        rewards = batch['rewards']
+        dones = batch['dones']
+        
+        is_per = isinstance(replay_buffer, SequencePrioritizedReplayBuffer)
+        if is_per:
+            weights = batch['weights']
+            sequence_indices = batch['sequence_indices']
+        else:
+            weights = torch.ones(batch_size, 1, device=self.device)
+        
+        with torch.amp.autocast('cuda', enabled=self.use_amp):
+            with torch.no_grad():
+                next_actions, _ = self.actor_target(next_obs_seq, None)
+                
+                noise = (
+                    torch.randn_like(next_actions) * self.policy_noise
+                ).clamp(-self.noise_clip, self.noise_clip)
+                next_actions = (next_actions + noise).clamp(-self.max_action, self.max_action)
+                
+                target_q1, target_q2, _ = self.critic_target(next_obs_seq, next_actions, None)
+                target_q = torch.min(target_q1, target_q2)
+                target_q = rewards + (1 - dones) * self.gamma * target_q
+            
+            current_q1, current_q2, _ = self.critic(obs_seq, actions, None)
+            
+            td_errors1 = target_q - current_q1
+            td_errors2 = target_q - current_q2
+            
+            critic_loss = (weights * (td_errors1 ** 2)).mean() + \
+                          (weights * (td_errors2 ** 2)).mean()
+        
+        self.critic_optimizer.zero_grad()
+        self.scaler.scale(critic_loss).backward()
+        self.scaler.unscale_(self.critic_optimizer)
+        nn.utils.clip_grad_norm_(self.critic.parameters(), self.gradient_clip)
+        self.scaler.step(self.critic_optimizer)
+        
+        self._critic_loss = critic_loss.item()
+        
+        if is_per:
+            td_errors = (td_errors1.abs() + td_errors2.abs()) / 2
+            replay_buffer.update_priorities(
+                sequence_indices,
+                td_errors.detach().cpu().numpy().flatten()
+            )
+        
+        metrics = {
+            'critic_loss': self._critic_loss,
+            'q_value': current_q1.mean().item()
+        }
+        
+        if self._train_steps % self.policy_delay == 0:
+            with torch.amp.autocast('cuda', enabled=self.use_amp):
+                actor_actions, _ = self.actor(obs_seq, None)
+                actor_q1, _ = self.critic.q1_forward(obs_seq, actor_actions, None)
+                actor_loss = -actor_q1.mean()
+            
+            self.actor_optimizer.zero_grad()
+            self.scaler.scale(actor_loss).backward()
+            self.scaler.unscale_(self.actor_optimizer)
+            nn.utils.clip_grad_norm_(self.actor.parameters(), self.gradient_clip)
+            self.scaler.step(self.actor_optimizer)
+            
+            self._soft_update(self.actor, self.actor_target)
+            self._soft_update(self.critic, self.critic_target)
+            
+            self._actor_loss = actor_loss.item()
+            metrics['actor_loss'] = self._actor_loss
+        
+        self.scaler.update()
+        
+        return metrics
+    
+    def _soft_update(self, source: nn.Module, target: nn.Module) -> None:
+        for src_param, tgt_param in zip(source.parameters(), target.parameters()):
+            tgt_param.data.copy_(
+                self.tau * src_param.data + (1.0 - self.tau) * tgt_param.data
+            )
+    
+    def reset_noise(self) -> None:
+        self.exploration_noise.reset()
+    
+    def save(self, path: Union[str, Path]) -> None:
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        
+        torch.save({
+            'actor': self.actor.state_dict(),
+            'actor_target': self.actor_target.state_dict(),
+            'critic': self.critic.state_dict(),
+            'critic_target': self.critic_target.state_dict(),
+            'actor_optimizer': self.actor_optimizer.state_dict(),
+            'critic_optimizer': self.critic_optimizer.state_dict(),
+            'train_steps': self._train_steps,
+            'config': self.get_config()
+        }, path / 'td3_lstm_checkpoint.pt')
+    
+    def load(self, path: Union[str, Path]) -> None:
+        checkpoint = torch.load(Path(path) / 'td3_lstm_checkpoint.pt', map_location=self.device)
+        
+        self.actor.load_state_dict(checkpoint['actor'])
+        self.actor_target.load_state_dict(checkpoint['actor_target'])
+        self.critic.load_state_dict(checkpoint['critic'])
+        self.critic_target.load_state_dict(checkpoint['critic_target'])
+        self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
+        self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
+        self._train_steps = checkpoint['train_steps']
+    
+    def get_config(self) -> Dict[str, Any]:
+        return {
+            'obs_dim': self.obs_dim,
+            'action_dim': self.action_dim,
+            'hidden_dim': self.hidden_dim,
+            'lstm_hidden': self.lstm_hidden,
+            'lstm_layers': self.lstm_layers,
+            'sequence_length': self.sequence_length,
+            'gamma': self.gamma,
+            'tau': self.tau,
+            'max_action': self.max_action,
+            'policy_noise': self.policy_noise,
+            'noise_clip': self.noise_clip,
+            'policy_delay': self.policy_delay,
+            'gradient_clip': self.gradient_clip
+        }
+
+
 def create_agent(
     agent_type: str,
     state_dim: int,
     action_dim: int,
     device: torch.device,
     **kwargs
-) -> Union[DDPGAgent, TD3Agent]:
+) -> Union[DDPGAgent, TD3Agent, TD3LSTMAgent]:
     if agent_type.lower() == 'ddpg':
         return DDPGAgent(state_dim, action_dim, device, **kwargs)
     elif agent_type.lower() == 'td3':
         return TD3Agent(state_dim, action_dim, device, **kwargs)
+    elif agent_type.lower() == 'td3_lstm':
+        return TD3LSTMAgent(state_dim, action_dim, device, **kwargs)
     else:
-        raise ValueError(f"Tipo de agente desconocido: {agent_type}")
+        raise ValueError(f"Unknown agent type: {agent_type}")
