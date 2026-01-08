@@ -6,6 +6,11 @@
 #include "Quadrotor.h"
 #include "PhysicsEngine.h"
 #include "ReplayBuffer.h"
+#include "SOTAActuator.h"
+#include "StateEstimator.h"
+#include "ActuatorFailure.h"
+#include "CollisionWorld.h"
+#include "PayloadDynamics.h"
 
 namespace py = pybind11;
 
@@ -450,4 +455,502 @@ PYBIND11_MODULE(drone_core, m) {
         .def("capacity", &helix::UniformReplayBuffer::capacity)
         .def("is_ready", &helix::UniformReplayBuffer::isReady)
         .def("__len__", &helix::UniformReplayBuffer::size);
+    
+    py::class_<SOTAActuatorConfig>(m, "SOTAActuatorConfig")
+        .def(py::init<>())
+        .def_readwrite("delay_ms", &SOTAActuatorConfig::delayMs)
+        .def_readwrite("tau_spin_up", &SOTAActuatorConfig::tauSpinUp)
+        .def_readwrite("tau_spin_down", &SOTAActuatorConfig::tauSpinDown)
+        .def_readwrite("rotor_inertia", &SOTAActuatorConfig::rotorInertia)
+        .def_readwrite("voltage_sag_factor", &SOTAActuatorConfig::voltageSagFactor)
+        .def_readwrite("max_rpm", &SOTAActuatorConfig::maxRpm)
+        .def_readwrite("min_rpm", &SOTAActuatorConfig::minRpm)
+        .def_readwrite("hover_rpm", &SOTAActuatorConfig::hoverRpm)
+        .def_readwrite("rpm_range", &SOTAActuatorConfig::rpmRange)
+        .def_readwrite("max_slew_rate", &SOTAActuatorConfig::maxSlewRate)
+        .def_readwrite("process_noise_std", &SOTAActuatorConfig::processNoiseStd)
+        .def_readwrite("active_braking_gain", &SOTAActuatorConfig::activeBrakingGain)
+        .def_readwrite("thermal_time_constant", &SOTAActuatorConfig::thermalTimeConstant)
+        .def_readwrite("nominal_voltage", &SOTAActuatorConfig::nominalVoltage)
+        .def_readwrite("damping_ratio", &SOTAActuatorConfig::dampingRatio)
+        .def_readwrite("thermal_derating", &SOTAActuatorConfig::thermalDerating)
+        .def_readwrite("max_temperature", &SOTAActuatorConfig::maxTemperature)
+        .def_readwrite("simulation_dt", &SOTAActuatorConfig::simulationDt);
+    
+    py::class_<SOTAActuatorState>(m, "SOTAActuatorState")
+        .def(py::init<>())
+        .def_property_readonly("current_rpm", [](const SOTAActuatorState& s) {
+            return std::vector<double>(s.currentRpm, s.currentRpm + 4);
+        })
+        .def_property_readonly("filtered_rpm", [](const SOTAActuatorState& s) {
+            return std::vector<double>(s.filteredRpm, s.filteredRpm + 4);
+        })
+        .def_property_readonly("motor_temperature", [](const SOTAActuatorState& s) {
+            return std::vector<double>(s.motorTemperature, s.motorTemperature + 4);
+        })
+        .def_property_readonly("total_current", [](const SOTAActuatorState& s) {
+            return std::vector<double>(s.totalCurrent, s.totalCurrent + 4);
+        })
+        .def_property_readonly("thermal_efficiency", [](const SOTAActuatorState& s) {
+            return std::vector<double>(s.thermalEfficiency, s.thermalEfficiency + 4);
+        })
+        .def_property_readonly("rpm_derivative", [](const SOTAActuatorState& s) {
+            return std::vector<double>(s.rpmDerivative, s.rpmDerivative + 4);
+        })
+        .def_property_readonly("previous_target", [](const SOTAActuatorState& s) {
+            return std::vector<double>(s.previousTarget, s.previousTarget + 4);
+        })
+        .def_readonly("delay_steps", &SOTAActuatorState::delaySteps)
+        .def_readonly("buffer_index", &SOTAActuatorState::bufferIndex);
+    
+    py::class_<SOTAActuatorModel>(m, "SOTAActuatorModel")
+        .def(py::init<>())
+        .def(py::init<const SOTAActuatorConfig&>())
+        .def("reset", &SOTAActuatorModel::reset)
+        .def("step", [](SOTAActuatorModel& self,
+                        py::array_t<double, py::array::c_style | py::array::forcecast> commanded_rpm,
+                        double dt, double voltage) {
+            py::array_t<double> output(4);
+            self.step(commanded_rpm.data(), dt, voltage, output.mutable_data());
+            return output;
+        })
+        .def("step_normalized", [](SOTAActuatorModel& self,
+                                   py::array_t<double, py::array::c_style | py::array::forcecast> action,
+                                   double dt, double voltage) {
+            py::array_t<double> output(4);
+            self.stepNormalized(action.data(), dt, voltage, output.mutable_data());
+            return output;
+        })
+        .def("get_voltage_sag_factor", &SOTAActuatorModel::getVoltageSagFactor)
+        .def("get_effective_tau", &SOTAActuatorModel::getEffectiveTau)
+        .def("get_state", &SOTAActuatorModel::getState, py::return_value_policy::reference)
+        .def("get_config", &SOTAActuatorModel::getConfig, py::return_value_policy::reference)
+        .def("set_config", &SOTAActuatorModel::setConfig);
+    
+    py::class_<SOTASecondOrderFilter>(m, "SOTASecondOrderFilter")
+        .def(py::init<>())
+        .def(py::init<double, double, double>(),
+             py::arg("cutoff_hz"), py::arg("damping"), py::arg("dt"))
+        .def("configure", &SOTASecondOrderFilter::configure)
+        .def("filter", &SOTASecondOrderFilter::filter)
+        .def("reset", &SOTASecondOrderFilter::reset);
+    
+    py::class_<SOTAButterworthFilter>(m, "SOTAButterworthFilter")
+        .def(py::init<>())
+        .def(py::init<int, double, double>(),
+             py::arg("order"), py::arg("cutoff_hz"), py::arg("sample_rate"))
+        .def("configure", &SOTAButterworthFilter::configure)
+        .def("filter", &SOTAButterworthFilter::filter)
+        .def("reset", &SOTAButterworthFilter::reset);
+    
+    py::class_<SensorNoise>(m, "SensorNoise")
+        .def(py::init<>())
+        .def_readwrite("accel_std", &SensorNoise::accel_std)
+        .def_readwrite("gyro_std", &SensorNoise::gyro_std)
+        .def_readwrite("gps_pos_std", &SensorNoise::gps_pos_std)
+        .def_readwrite("gps_vel_std", &SensorNoise::gps_vel_std)
+        .def_readwrite("baro_std", &SensorNoise::baro_std)
+        .def_readwrite("mag_std", &SensorNoise::mag_std)
+        .def_readwrite("gps_update_rate", &SensorNoise::gps_update_rate)
+        .def_readwrite("baro_update_rate", &SensorNoise::baro_update_rate)
+        .def_readwrite("mag_update_rate", &SensorNoise::mag_update_rate)
+        .def_readwrite("accel_bias_stability", &SensorNoise::accel_bias_stability)
+        .def_readwrite("gyro_bias_stability", &SensorNoise::gyro_bias_stability)
+        .def_readwrite("cable_angle_std", &SensorNoise::cable_angle_std)
+        .def_readwrite("cable_angle_update_rate", &SensorNoise::cable_angle_update_rate)
+        .def_readwrite("cable_sensor_enabled", &SensorNoise::cable_sensor_enabled);
+    
+    py::class_<EKFState>(m, "EKFState")
+        .def(py::init<>())
+        .def_readwrite("position", &EKFState::position)
+        .def_readwrite("velocity", &EKFState::velocity)
+        .def_readwrite("orientation", &EKFState::orientation)
+        .def_readwrite("accel_bias", &EKFState::accel_bias)
+        .def_readwrite("gyro_bias", &EKFState::gyro_bias);
+    
+    py::class_<SensorReading>(m, "SensorReading")
+        .def(py::init<>())
+        .def_readwrite("accelerometer", &SensorReading::accelerometer)
+        .def_readwrite("gyroscope", &SensorReading::gyroscope)
+        .def_readwrite("gps_position", &SensorReading::gps_position)
+        .def_readwrite("gps_velocity", &SensorReading::gps_velocity)
+        .def_readwrite("barometer", &SensorReading::barometer)
+        .def_readwrite("magnetometer", &SensorReading::magnetometer)
+        .def_readwrite("timestamp", &SensorReading::timestamp)
+        .def_readwrite("gps_valid", &SensorReading::gps_valid)
+        .def_readwrite("baro_valid", &SensorReading::baro_valid)
+        .def_readwrite("mag_valid", &SensorReading::mag_valid)
+        .def_readwrite("cable", &SensorReading::cable);
+    
+    py::class_<CableSensorReading>(m, "CableSensorReading")
+        .def(py::init<>())
+        .def_readwrite("theta_x", &CableSensorReading::theta_x)
+        .def_readwrite("theta_y", &CableSensorReading::theta_y)
+        .def_readwrite("tension", &CableSensorReading::tension)
+        .def_readwrite("timestamp", &CableSensorReading::timestamp)
+        .def_readwrite("valid", &CableSensorReading::valid);
+    
+    py::class_<RobustnessConfig>(m, "RobustnessConfig")
+        .def(py::init<>())
+        .def_readwrite("enable_chi_square_gating", &RobustnessConfig::enable_chi_square_gating)
+        .def_readwrite("enable_fault_detection", &RobustnessConfig::enable_fault_detection)
+        .def_readwrite("enable_adaptive_noise", &RobustnessConfig::enable_adaptive_noise)
+        .def_readwrite("enable_state_dependent_noise", &RobustnessConfig::enable_state_dependent_noise)
+        .def_readwrite("chi_square_threshold_1dof", &RobustnessConfig::chi_square_threshold_1dof)
+        .def_readwrite("chi_square_threshold_3dof", &RobustnessConfig::chi_square_threshold_3dof)
+        .def_readwrite("max_consecutive_rejections", &RobustnessConfig::max_consecutive_rejections)
+        .def_readwrite("adaptive_alpha", &RobustnessConfig::adaptive_alpha)
+        .def_readwrite("gyro_noise_scale_coeff", &RobustnessConfig::gyro_noise_scale_coeff)
+        .def_readwrite("accel_noise_scale_coeff", &RobustnessConfig::accel_noise_scale_coeff)
+        .def_readwrite("enable_external_force_estimation", &RobustnessConfig::enable_external_force_estimation)
+        .def_readwrite("external_force_process_noise", &RobustnessConfig::external_force_process_noise);
+    
+    py::class_<ConsistencyMetrics>(m, "ConsistencyMetrics")
+        .def(py::init<>())
+        .def_readonly("current_nis", &ConsistencyMetrics::current_nis)
+        .def_readonly("avg_nis", &ConsistencyMetrics::avg_nis)
+        .def_readonly("nees", &ConsistencyMetrics::nees)
+        .def_readonly("total_updates", &ConsistencyMetrics::total_updates)
+        .def_readonly("rejected_updates", &ConsistencyMetrics::rejected_updates)
+        .def_readonly("rejection_rate", &ConsistencyMetrics::rejection_rate);
+    
+    py::class_<ExtendedKalmanFilter>(m, "ExtendedKalmanFilter")
+        .def(py::init<>())
+        .def(py::init<const SensorNoise&>())
+        .def("reset", py::overload_cast<>(&ExtendedKalmanFilter::reset))
+        .def("reset", py::overload_cast<const Vec3&, const Vec3&, const Quaternion&>(&ExtendedKalmanFilter::reset))
+        .def("predict", &ExtendedKalmanFilter::predict)
+        .def("update_gps_position", &ExtendedKalmanFilter::updateGPSPosition)
+        .def("update_gps_velocity", &ExtendedKalmanFilter::updateGPSVelocity)
+        .def("update_barometer", &ExtendedKalmanFilter::updateBarometer)
+        .def("update_magnetometer", &ExtendedKalmanFilter::updateMagnetometer)
+        .def("get_state", &ExtendedKalmanFilter::getState)
+        .def("get_position", &ExtendedKalmanFilter::getPosition)
+        .def("get_velocity", &ExtendedKalmanFilter::getVelocity)
+        .def("get_orientation", &ExtendedKalmanFilter::getOrientation)
+        .def("get_accel_bias", &ExtendedKalmanFilter::getAccelBias)
+        .def("get_gyro_bias", &ExtendedKalmanFilter::getGyroBias)
+        .def("get_position_uncertainty", &ExtendedKalmanFilter::getPositionUncertainty)
+        .def("get_orientation_uncertainty", &ExtendedKalmanFilter::getOrientationUncertainty)
+        .def("set_process_noise", &ExtendedKalmanFilter::setProcessNoise)
+        .def("set_measurement_noise", &ExtendedKalmanFilter::setMeasurementNoise)
+        .def("set_robustness_config", &ExtendedKalmanFilter::setRobustnessConfig)
+        .def("is_sensor_healthy", &ExtendedKalmanFilter::isSensorHealthy)
+        .def("get_current_nis", &ExtendedKalmanFilter::getCurrentNIS)
+        .def("get_consistency_metrics", &ExtendedKalmanFilter::getConsistencyMetrics)
+        .def("is_yaw_observable", &ExtendedKalmanFilter::isYawObservable)
+        .def("is_accel_valid", &ExtendedKalmanFilter::isAccelValid)
+        .def("compute_nees", &ExtendedKalmanFilter::computeNEES);
+    
+    py::class_<SensorSimulator>(m, "SensorSimulator")
+        .def(py::init<>())
+        .def(py::init<const SensorNoise&>())
+        .def("set_noise", &SensorSimulator::setNoise)
+        .def("simulate", &SensorSimulator::simulate)
+        .def("simulate_cable_angle", &SensorSimulator::simulateCableAngle)
+        .def("reset", &SensorSimulator::reset)
+        .def("inject_gps_failure", &SensorSimulator::injectGPSFailure)
+        .def("inject_baro_failure", &SensorSimulator::injectBaroFailure)
+        .def("inject_mag_failure", &SensorSimulator::injectMagFailure)
+        .def("inject_cable_failure", &SensorSimulator::injectCableFailure)
+        .def("inject_gps_spoof", &SensorSimulator::injectGPSSpoof)
+        .def("clear_all_failures", &SensorSimulator::clearAllFailures);
+    
+    py::class_<StateEstimator>(m, "StateEstimator")
+        .def(py::init<>())
+        .def(py::init<const SensorNoise&>())
+        .def("reset", py::overload_cast<>(&StateEstimator::reset))
+        .def("reset", py::overload_cast<const State&>(&StateEstimator::reset))
+        .def("update", &StateEstimator::update)
+        .def("get_estimated_state", &StateEstimator::getEstimatedState)
+        .def("get_last_sensor_reading", &StateEstimator::getLastSensorReading)
+        .def("set_noise", &StateEstimator::setNoise)
+        .def("get_noise", &StateEstimator::getNoise)
+        .def("get_position_error", &StateEstimator::getPositionError)
+        .def("get_velocity_error", &StateEstimator::getVelocityError)
+        .def("get_orientation_error", &StateEstimator::getOrientationError)
+        .def("is_initialized", &StateEstimator::isInitialized);
+    
+    py::enum_<FailureType>(m, "FailureType")
+        .value("NONE", FailureType::NONE)
+        .value("STUCK", FailureType::STUCK)
+        .value("REDUCED_POWER", FailureType::REDUCED_POWER)
+        .value("OSCILLATING", FailureType::OSCILLATING)
+        .value("DELAYED_RESPONSE", FailureType::DELAYED_RESPONSE)
+        .value("RANDOM_CUTOUT", FailureType::RANDOM_CUTOUT)
+        .value("THERMAL_DEGRADATION", FailureType::THERMAL_DEGRADATION)
+        .value("PARTIAL_LOSS", FailureType::PARTIAL_LOSS)
+        .value("COMPLETE_LOSS", FailureType::COMPLETE_LOSS);
+    
+    py::enum_<FailureMode>(m, "FailureMode")
+        .value("PERMANENT", FailureMode::PERMANENT)
+        .value("INTERMITTENT", FailureMode::INTERMITTENT)
+        .value("PROGRESSIVE", FailureMode::PROGRESSIVE);
+    
+    py::class_<FailureConfig>(m, "FailureConfig")
+        .def(py::init<>())
+        .def_readwrite("type", &FailureConfig::type)
+        .def_readwrite("mode", &FailureConfig::mode)
+        .def_readwrite("motor_id", &FailureConfig::motor_id)
+        .def_readwrite("severity", &FailureConfig::severity)
+        .def_readwrite("stuck_rpm", &FailureConfig::stuck_rpm)
+        .def_readwrite("oscillation_freq", &FailureConfig::oscillation_freq)
+        .def_readwrite("oscillation_amplitude", &FailureConfig::oscillation_amplitude)
+        .def_readwrite("delay_factor", &FailureConfig::delay_factor)
+        .def_readwrite("cutout_probability", &FailureConfig::cutout_probability)
+        .def_readwrite("thermal_rate", &FailureConfig::thermal_rate)
+        .def_readwrite("intermittent_on_time", &FailureConfig::intermittent_on_time)
+        .def_readwrite("intermittent_off_time", &FailureConfig::intermittent_off_time)
+        .def_readwrite("progressive_rate", &FailureConfig::progressive_rate)
+        .def_readwrite("start_time", &FailureConfig::start_time)
+        .def_readwrite("duration", &FailureConfig::duration);
+    
+    py::class_<ActuatorFailureInjector>(m, "ActuatorFailureInjector")
+        .def(py::init<>())
+        .def("inject_failure", py::overload_cast<const FailureConfig&>(&ActuatorFailureInjector::injectFailure))
+        .def("inject_failure", py::overload_cast<int, FailureType, double>(&ActuatorFailureInjector::injectFailure))
+        .def("clear_failure", &ActuatorFailureInjector::clearFailure)
+        .def("clear_all_failures", &ActuatorFailureInjector::clearAllFailures)
+        .def("schedule_failure", &ActuatorFailureInjector::scheduleFailure)
+        .def("apply_failures", [](ActuatorFailureInjector& self,
+                                  py::array_t<double, py::array::c_style | py::array::forcecast> rpm,
+                                  double dt) {
+            self.applyFailures(rpm.mutable_data(), dt);
+        })
+        .def("reset", &ActuatorFailureInjector::reset)
+        .def("has_active_failure", py::overload_cast<>(&ActuatorFailureInjector::hasActiveFailure, py::const_))
+        .def("has_active_failure", py::overload_cast<int>(&ActuatorFailureInjector::hasActiveFailure, py::const_))
+        .def("get_failure_type", &ActuatorFailureInjector::getFailureType)
+        .def("get_failure_severity", &ActuatorFailureInjector::getFailureSeverity)
+        .def("set_random_failure_probability", &ActuatorFailureInjector::setRandomFailureProbability)
+        .def("enable_random_failures", &ActuatorFailureInjector::enableRandomFailures);
+    
+    py::enum_<FailureScenarioGenerator::Scenario>(m, "FailureScenario")
+        .value("SINGLE_MOTOR_LOSS", FailureScenarioGenerator::Scenario::SINGLE_MOTOR_LOSS)
+        .value("DUAL_MOTOR_LOSS", FailureScenarioGenerator::Scenario::DUAL_MOTOR_LOSS)
+        .value("OPPOSITE_MOTOR_LOSS", FailureScenarioGenerator::Scenario::OPPOSITE_MOTOR_LOSS)
+        .value("ADJACENT_MOTOR_LOSS", FailureScenarioGenerator::Scenario::ADJACENT_MOTOR_LOSS)
+        .value("PROGRESSIVE_DEGRADATION", FailureScenarioGenerator::Scenario::PROGRESSIVE_DEGRADATION)
+        .value("RANDOM_INTERMITTENT", FailureScenarioGenerator::Scenario::RANDOM_INTERMITTENT)
+        .value("THERMAL_RUNWAY", FailureScenarioGenerator::Scenario::THERMAL_RUNWAY)
+        .value("CASCADING_FAILURE", FailureScenarioGenerator::Scenario::CASCADING_FAILURE);
+    
+    py::class_<FailureScenarioGenerator>(m, "FailureScenarioGenerator")
+        .def_static("generate_scenario", &FailureScenarioGenerator::generateScenario,
+                    py::arg("injector"), py::arg("scenario"), py::arg("severity") = 1.0)
+        .def_static("single_motor_loss", &FailureScenarioGenerator::singleMotorLoss)
+        .def_static("dual_motor_loss", &FailureScenarioGenerator::dualMotorLoss)
+        .def_static("opposite_motor_loss", &FailureScenarioGenerator::oppositeMotorLoss)
+        .def_static("adjacent_motor_loss", &FailureScenarioGenerator::adjacentMotorLoss)
+        .def_static("progressive_degradation", &FailureScenarioGenerator::progressiveDegradation)
+        .def_static("random_intermittent", &FailureScenarioGenerator::randomIntermittent)
+        .def_static("thermal_runaway", &FailureScenarioGenerator::thermalRunaway)
+        .def_static("cascading_failure", &FailureScenarioGenerator::cascadingFailure);
+    
+    py::enum_<ColliderType>(m, "ColliderType")
+        .value("SPHERE", ColliderType::SPHERE)
+        .value("AABB", ColliderType::AABB)
+        .value("CYLINDER", ColliderType::CYLINDER)
+        .value("PLANE", ColliderType::PLANE);
+    
+    py::class_<AABB>(m, "AABB")
+        .def(py::init<>())
+        .def(py::init<const Vec3&, const Vec3&>())
+        .def_static("from_center_size", &AABB::fromCenterSize)
+        .def_readwrite("min", &AABB::min)
+        .def_readwrite("max", &AABB::max)
+        .def("center", &AABB::center)
+        .def("size", &AABB::size)
+        .def("contains", &AABB::contains)
+        .def("intersects", &AABB::intersects)
+        .def("distance_to", &AABB::distanceTo)
+        .def("closest_point", &AABB::closestPoint)
+        .def("expanded", &AABB::expanded);
+    
+    py::class_<Sphere>(m, "Sphere")
+        .def(py::init<>())
+        .def(py::init<const Vec3&, double>())
+        .def_readwrite("center", &Sphere::center)
+        .def_readwrite("radius", &Sphere::radius)
+        .def("contains", &Sphere::contains)
+        .def("intersects", py::overload_cast<const Sphere&>(&Sphere::intersects, py::const_))
+        .def("distance_to", &Sphere::distanceTo);
+    
+    py::class_<CollisionResult>(m, "CollisionResult")
+        .def(py::init<>())
+        .def_readwrite("collision", &CollisionResult::collision)
+        .def_readwrite("collider_id", &CollisionResult::collider_id)
+        .def_readwrite("distance", &CollisionResult::distance)
+        .def_readwrite("closest_point", &CollisionResult::closest_point)
+        .def_readwrite("normal", &CollisionResult::normal)
+        .def_readwrite("penetration", &CollisionResult::penetration);
+    
+    py::class_<RaycastResult>(m, "RaycastResult")
+        .def(py::init<>())
+        .def_readwrite("hit", &RaycastResult::hit)
+        .def_readwrite("collider_id", &RaycastResult::collider_id)
+        .def_readwrite("distance", &RaycastResult::distance)
+        .def_readwrite("hit_point", &RaycastResult::hit_point)
+        .def_readwrite("normal", &RaycastResult::normal);
+    
+    py::class_<CollisionWorld>(m, "CollisionWorld")
+        .def(py::init<>())
+        .def("add_sphere", &CollisionWorld::addSphere)
+        .def("add_aabb", &CollisionWorld::addAABB)
+        .def("add_cylinder", &CollisionWorld::addCylinder)
+        .def("add_ground_plane", &CollisionWorld::addGroundPlane, py::arg("height") = 0.0)
+        .def("add_building", &CollisionWorld::addBuilding)
+        .def("add_tree", &CollisionWorld::addTree)
+        .def("add_pole", &CollisionWorld::addPole)
+        .def("check_collision", &CollisionWorld::checkCollision)
+        .def("has_collision", &CollisionWorld::hasCollision)
+        .def("distance_to_nearest", &CollisionWorld::distanceToNearest)
+        .def("nearest_collider_id", &CollisionWorld::nearestColliderId)
+        .def("raycast", &CollisionWorld::raycast, py::arg("origin"), py::arg("direction"), py::arg("max_distance") = 1000.0)
+        .def("line_of_sight", &CollisionWorld::lineOfSight)
+        .def("get_colliders_in_radius", &CollisionWorld::getCollidersInRadius)
+        .def("generate_random_obstacles", &CollisionWorld::generateRandomObstacles)
+        .def("generate_urban_environment", &CollisionWorld::generateUrbanEnvironment)
+        .def("generate_forest_environment", &CollisionWorld::generateForestEnvironment)
+        .def("get_collider_count", &CollisionWorld::getColliderCount)
+        .def("clear_colliders", &CollisionWorld::clearColliders)
+        .def("reset", &CollisionWorld::reset);
+    
+    py::enum_<CableState>(m, "CableState")
+        .value("SLACK", CableState::SLACK)
+        .value("TENSIONED", CableState::TENSIONED)
+        .value("STRETCHED", CableState::STRETCHED);
+    
+    py::class_<CableConfig>(m, "CableConfig")
+        .def(py::init<>())
+        .def_readwrite("rest_length", &CableConfig::rest_length)
+        .def_readwrite("compliance", &CableConfig::compliance)
+        .def_readwrite("damping", &CableConfig::damping)
+        .def_readwrite("linear_density", &CableConfig::linear_density)
+        .def_readwrite("num_segments", &CableConfig::num_segments)
+        .def_readwrite("drag_coefficient", &CableConfig::drag_coefficient)
+        .def_readwrite("diameter", &CableConfig::diameter)
+        .def_readwrite("enable_drag", &CableConfig::enable_drag)
+        .def_readwrite("enable_catenary", &CableConfig::enable_catenary)
+        .def_readwrite("max_strain", &CableConfig::max_strain);
+    
+    py::class_<PayloadConfig>(m, "PayloadConfig")
+        .def(py::init<>())
+        .def_readwrite("mass", &PayloadConfig::mass)
+        .def_readwrite("inertia", &PayloadConfig::inertia)
+        .def_readwrite("drag_area", &PayloadConfig::drag_area)
+        .def_readwrite("drag_coefficient", &PayloadConfig::drag_coefficient)
+        .def_readwrite("center_of_mass", &PayloadConfig::center_of_mass)
+        .def_readwrite("restitution", &PayloadConfig::restitution)
+        .def_readwrite("friction", &PayloadConfig::friction);
+    
+    py::class_<PayloadState>(m, "PayloadState")
+        .def(py::init<>())
+        .def(py::init<const Vec3&, const Vec3&>())
+        .def_readwrite("position", &PayloadState::position)
+        .def_readwrite("velocity", &PayloadState::velocity)
+        .def_readwrite("orientation", &PayloadState::orientation)
+        .def_readwrite("angular_velocity", &PayloadState::angular_velocity);
+    
+    py::class_<CableForces>(m, "CableForces")
+        .def(py::init<>())
+        .def_readonly("tension_force", &CableForces::tension_force)
+        .def_readonly("damping_force", &CableForces::damping_force)
+        .def_readonly("drag_force", &CableForces::drag_force)
+        .def_readonly("tension_magnitude", &CableForces::tension_magnitude)
+        .def_readonly("strain", &CableForces::strain)
+        .def_readonly("state", &CableForces::state)
+        .def("total", &CableForces::total);
+    
+    py::class_<PayloadForces>(m, "PayloadForces")
+        .def(py::init<>())
+        .def_readonly("gravity", &PayloadForces::gravity)
+        .def_readonly("cable_tension", &PayloadForces::cable_tension)
+        .def_readonly("aerodynamic_drag", &PayloadForces::aerodynamic_drag)
+        .def_readonly("ground_reaction", &PayloadForces::ground_reaction)
+        .def_readonly("total_force", &PayloadForces::total_force)
+        .def_readonly("total_torque", &PayloadForces::total_torque);
+    
+    py::class_<DronePayloadCoupling>(m, "DronePayloadCoupling")
+        .def(py::init<>())
+        .def_readonly("force_on_drone", &DronePayloadCoupling::force_on_drone)
+        .def_readonly("torque_on_drone", &DronePayloadCoupling::torque_on_drone)
+        .def_readonly("total_tension", &DronePayloadCoupling::total_tension)
+        .def_readonly("payload_attached", &DronePayloadCoupling::payload_attached)
+        .def_readonly("total_energy", &DronePayloadCoupling::total_energy);
+    
+    py::enum_<IntegratorType>(m, "IntegratorType")
+        .value("VERLET", IntegratorType::VERLET)
+        .value("RK4", IntegratorType::RK4)
+        .value("XPBD", IntegratorType::XPBD);
+    
+    py::class_<UnifiedXPBDSystem>(m, "XPBDCable")
+        .def(py::init<>())
+        .def(py::init<const CableConfig&, const PayloadConfig&>())
+        .def("initialize", &UnifiedXPBDSystem::initialize)
+        .def("prestabilize", &UnifiedXPBDSystem::prestabilize)
+        .def("step", &UnifiedXPBDSystem::step, py::arg("anchor_pos"), py::arg("anchor_vel"), 
+             py::arg("dt"), py::arg("wind") = Vec3(), py::arg("ground_height") = 0.0)
+        .def("get_anchor_force", &UnifiedXPBDSystem::getAnchorForce)
+        .def("get_state", &UnifiedXPBDSystem::getState)
+        .def("get_tension", &UnifiedXPBDSystem::getTension)
+        .def("get_strain", &UnifiedXPBDSystem::getStrain)
+        .def("get_total_length", &UnifiedXPBDSystem::getTotalLength)
+        .def("get_particle_count", &UnifiedXPBDSystem::getParticleCount)
+        .def("get_payload_particle_index", &UnifiedXPBDSystem::getPayloadParticleIndex)
+        .def("get_payload_position", &UnifiedXPBDSystem::getPayloadPosition)
+        .def("get_payload_velocity", &UnifiedXPBDSystem::getPayloadVelocity)
+        .def("get_kinetic_energy", &UnifiedXPBDSystem::getKineticEnergy)
+        .def("get_potential_energy", &UnifiedXPBDSystem::getPotentialEnergy, py::arg("ground_height") = 0.0)
+        .def("get_total_energy", &UnifiedXPBDSystem::getTotalEnergy, py::arg("ground_height") = 0.0)
+        .def("reset", &UnifiedXPBDSystem::reset);
+    
+    py::class_<PayloadDynamics>(m, "PayloadDynamics")
+        .def(py::init<>())
+        .def(py::init<const PayloadConfig&, const CableConfig&>())
+        .def("step", &PayloadDynamics::step, py::arg("drone_position"), py::arg("drone_orientation"),
+             py::arg("drone_velocity"), py::arg("drone_angular_velocity"), py::arg("dt"), 
+             py::arg("air_density") = 1.225)
+        .def("get_coupling_forces", &PayloadDynamics::getCouplingForces)
+        .def("attach", &PayloadDynamics::attach, py::arg("initial_offset") = Vec3(0, 0, -1.0))
+        .def("detach", &PayloadDynamics::detach)
+        .def("is_attached", &PayloadDynamics::isAttached)
+        .def("add_attachment_point", &PayloadDynamics::addAttachmentPoint)
+        .def("clear_attachment_points", &PayloadDynamics::clearAttachmentPoints)
+        .def("get_attachment_count", &PayloadDynamics::getAttachmentCount)
+        .def("get_payload_state", &PayloadDynamics::getPayloadState)
+        .def("get_payload_forces", &PayloadDynamics::getPayloadForces)
+        .def("set_payload_config", &PayloadDynamics::setPayloadConfig)
+        .def("set_cable_config", &PayloadDynamics::setCableConfig)
+        .def("get_payload_config", &PayloadDynamics::getPayloadConfig)
+        .def("get_cable_config", &PayloadDynamics::getCableConfig)
+        .def("set_ground_height", &PayloadDynamics::setGroundHeight)
+        .def("set_wind_velocity", &PayloadDynamics::setWindVelocity)
+        .def("set_integrator", &PayloadDynamics::setIntegrator)
+        .def("reset", py::overload_cast<>(&PayloadDynamics::reset))
+        .def("reset", py::overload_cast<const PayloadState&>(&PayloadDynamics::reset))
+        .def("get_kinetic_energy", &PayloadDynamics::getKineticEnergy)
+        .def("get_potential_energy", &PayloadDynamics::getPotentialEnergy)
+        .def("get_cable_energy", &PayloadDynamics::getCableEnergy)
+        .def("get_total_energy", &PayloadDynamics::getTotalEnergy)
+        .def("get_swing_angle", &PayloadDynamics::getSwingAngle)
+        .def("get_cable_angle_from_vertical", &PayloadDynamics::getCableAngleFromVertical)
+        .def("get_natural_frequency", &PayloadDynamics::getNaturalFrequency);
+    
+    py::class_<SwingingPayloadController::LQRGains>(m, "LQRGains")
+        .def(py::init<>())
+        .def_readwrite("max_compensation", &SwingingPayloadController::LQRGains::max_compensation)
+        .def_readwrite("damping_ratio", &SwingingPayloadController::LQRGains::damping_ratio);
+    
+    py::class_<SwingingPayloadController>(m, "SwingingPayloadController")
+        .def(py::init<>())
+        .def(py::init<const SwingingPayloadController::LQRGains&>())
+        .def("compute_compensation", &SwingingPayloadController::computeCompensation)
+        .def("compute_input_shaping", &SwingingPayloadController::computeInputShaping)
+        .def("compute_energy_based_control", &SwingingPayloadController::computeEnergyBasedControl)
+        .def("compute_compensation_from_angles", &SwingingPayloadController::computeCompensationFromAngles)
+        .def_static("estimate_payload_from_cable_angles", &SwingingPayloadController::estimatePayloadFromCableAngles)
+        .def("set_gains", &SwingingPayloadController::setGains)
+        .def("get_gains", &SwingingPayloadController::getGains)
+        .def("reset", &SwingingPayloadController::reset);
 }

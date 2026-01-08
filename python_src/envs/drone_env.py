@@ -34,8 +34,6 @@ class EnvConfig:
     velocity_scale: float = 5.0
     angular_velocity_scale: float = 10.0
     
-    action_smoothing: float = 0.5
-    
     reward_position: float = -0.5
     reward_velocity: float = -0.025
     reward_angular: float = -0.01
@@ -50,9 +48,6 @@ class EnvConfig:
     reward_height_bonus: float = 0.5
     reward_stability_bonus: float = 0.25
     reward_hover_bonus: float = 2.5
-    
-    reward_saturation_penalty: float = -0.01
-    saturation_threshold: float = 0.95
     
     crash_height: float = 0.03
     crash_distance: float = 10.0
@@ -70,6 +65,7 @@ class EnvConfig:
     wind_enabled: bool = True
     motor_dynamics: bool = True
     use_sub_stepping: bool = True
+    use_sota_actuator: bool = False
 
 
 class QuadrotorEnv(gym.Env):
@@ -94,9 +90,17 @@ class QuadrotorEnv(gym.Env):
             low=-1.0, high=1.0, shape=(4,), dtype=np.float32
         )
         
+        self._history_length = 4
+        self._base_obs_dim = 20
+        self._history_dim = self._history_length * 4 + self._history_length * 4
+        self._total_obs_dim = self._base_obs_dim + self._history_dim
+        
         self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(20,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(self._total_obs_dim,), dtype=np.float32
         )
+        
+        self._action_history = np.zeros((self._history_length, 4), dtype=np.float32)
+        self._rpm_history = np.zeros((self._history_length, 4), dtype=np.float32)
         
         self.target = target if target is not None else np.array([0.0, 0.0, 2.0])
         self._prev_action = np.zeros(4, dtype=np.float32)
@@ -106,17 +110,14 @@ class QuadrotorEnv(gym.Env):
         self._rng = np.random.default_rng()
         self._total_episodes = 0
         self._curriculum_progress = 0.0
-        self._curriculum_progress = 0.0
-        self._saturation_count = 0
-        self._last_applied_action = np.zeros(4, dtype=np.float32)
-        self._prev_prev_action = np.zeros(4, dtype=np.float32)
         
-        fs = 1.0 / self.config.dt
-        fc = 40.0
-        w = fc / (fs / 2)
-        w = min(w, 0.99)
-        self._b, self._a = signal.butter(2, w, 'low')
-        self._action_buffer = np.zeros((4, 3), dtype=np.float32)
+        if not self.config.use_sota_actuator:
+            fs = 1.0 / self.config.dt
+            fc = 40.0
+            w = min(fc / (fs / 2), 0.99)
+            self._b, self._a = signal.butter(2, w, 'low')
+            self._action_buffer = np.zeros((4, 3), dtype=np.float32)
+            self._filter_state = np.zeros((4, 2), dtype=np.float32)
     
     def _setup_drone(self):
         self._cfg = drone_core.QuadrotorConfig()
@@ -151,8 +152,28 @@ class QuadrotorEnv(gym.Env):
         self._cfg.aero.air_density = 1.225
         self._cfg.aero.ground_effect_coeff = 0.5
         
-        print(f"[DEBUG] Drone Configured: Mass={self._cfg.mass:.4f} kg, Max RPM={self._cfg.motor.max_rpm:.1f}")
         self._drone = drone_core.Quadrotor(self._cfg)
+        
+        if self.config.use_sota_actuator:
+            actuator_cfg = drone_core.SOTAActuatorConfig()
+            actuator_cfg.hover_rpm = self.config.hover_rpm
+            actuator_cfg.max_rpm = self.config.max_rpm
+            actuator_cfg.min_rpm = self.config.min_rpm
+            actuator_cfg.rpm_range = self.config.rpm_range
+            actuator_cfg.simulation_dt = self.config.dt / self.config.physics_sub_steps
+            actuator_cfg.damping_ratio = 0.9
+            actuator_cfg.tau_spin_up = 0.012
+            actuator_cfg.tau_spin_down = 0.010
+            actuator_cfg.rotor_inertia = 2.5e-5
+            actuator_cfg.process_noise_std = 5.0 if self.config.domain_randomization else 0.0
+            actuator_cfg.thermal_derating = 0.0
+            actuator_cfg.max_temperature = 80.0
+            actuator_cfg.delay_ms = 2.0
+            actuator_cfg.max_slew_rate = 50000.0
+            actuator_cfg.active_braking_gain = 1.2
+            self._sota_actuator = drone_core.SOTAActuatorModel(actuator_cfg)
+        else:
+            self._sota_actuator = None
     
     def _apply_domain_randomization(self):
         if not self.config.domain_randomization:
@@ -224,13 +245,17 @@ class QuadrotorEnv(gym.Env):
         self._episode_reward = 0.0
         self._total_episodes += 1
         self._hover_duration = 0
-        self._saturation_count = 0
-        self._last_applied_action = np.zeros(4, dtype=np.float32)
-        self._prev_prev_action = np.zeros(4, dtype=np.float32)
-        self._action_buffer = np.zeros((4, 3), dtype=np.float32)
         self._prev_rpm = np.full(4, self.config.hover_rpm, dtype=np.float32)
-        self._integral_error = 0.0
-        self._prev_vel_z = 0.0
+        
+        if not self.config.use_sota_actuator:
+            self._action_buffer = np.zeros((4, 3), dtype=np.float32)
+            self._filter_state = np.zeros((4, 2), dtype=np.float32)
+        
+        if self._sota_actuator is not None:
+            self._sota_actuator.reset()
+        
+        self._action_history = np.zeros((self._history_length, 4), dtype=np.float32)
+        self._rpm_history = np.full((self._history_length, 4), self.config.hover_rpm, dtype=np.float32)
         
         if self.config.motor_dynamics:
             warmup_rpm = self.config.hover_rpm
@@ -251,28 +276,39 @@ class QuadrotorEnv(gym.Env):
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
         
-        self._action_buffer[:, 2] = self._action_buffer[:, 1]
-        self._action_buffer[:, 1] = self._action_buffer[:, 0]
-        self._action_buffer[:, 0] = action
-        
-        x = self._action_buffer
-        y_new = (self._b[0]*x[:,0] + self._b[1]*x[:,1] + self._b[2]*x[:,2] 
-                 - self._a[1]*self._last_applied_action - self._a[2]*self._prev_prev_action) / self._a[0]
-        
-        smoothed_action = y_new
-        
-        self._prev_prev_action = self._last_applied_action
-        self._last_applied_action = smoothed_action
-        
-        rpm = self.config.hover_rpm + smoothed_action * self.config.rpm_range
-        rpm = np.clip(rpm, self.config.min_rpm, self.config.max_rpm)
-        
-        max_rpm_change = 45000.0 * self.config.dt
-        if hasattr(self, '_prev_rpm'):
-            rpm_delta = rpm - self._prev_rpm
-            rpm_delta = np.clip(rpm_delta, -max_rpm_change, max_rpm_change)
+        if self._sota_actuator is not None:
+            voltage = 16.8
+            rpm = np.array(self._sota_actuator.step_normalized(
+                action.tolist(), self.config.dt, voltage
+            ), dtype=np.float64)
+        else:
+            self._action_buffer[:, 2] = self._action_buffer[:, 1]
+            self._action_buffer[:, 1] = self._action_buffer[:, 0]
+            self._action_buffer[:, 0] = action
+            
+            x = self._action_buffer
+            y = self._filter_state
+            smoothed = (
+                self._b[0] * x[:, 0] + self._b[1] * x[:, 1] + self._b[2] * x[:, 2]
+                - self._a[1] * y[:, 0] - self._a[2] * y[:, 1]
+            ) / self._a[0]
+            
+            self._filter_state[:, 1] = self._filter_state[:, 0]
+            self._filter_state[:, 0] = smoothed
+            
+            rpm = self.config.hover_rpm + smoothed * self.config.rpm_range
+            rpm = np.clip(rpm, self.config.min_rpm, self.config.max_rpm)
+            
+            max_rpm_change = 45000.0 * self.config.dt
+            rpm_delta = np.clip(rpm - self._prev_rpm, -max_rpm_change, max_rpm_change)
             rpm = self._prev_rpm + rpm_delta
+        
         self._prev_rpm = rpm.copy()
+        
+        self._action_history[1:] = self._action_history[:-1]
+        self._action_history[0] = action
+        self._rpm_history[1:] = self._rpm_history[:-1]
+        self._rpm_history[0] = rpm.astype(np.float32)
         
         cmd = drone_core.MotorCommand(rpm[0], rpm[1], rpm[2], rpm[3])
         
@@ -287,7 +323,6 @@ class QuadrotorEnv(gym.Env):
         reward, terminated = self._compute_reward(action)
         truncated = self._steps >= self.config.max_steps
         
-        self._prev_prev_action_raw = self._prev_action.copy()
         self._prev_action = action.copy()
         self._episode_reward += reward
         
@@ -307,9 +342,14 @@ class QuadrotorEnv(gym.Env):
         
         error = (self.target - np.array([s.position.x, s.position.y, s.position.z])) / self.config.position_scale
         
-        prev_action = self._prev_action
+        action_history_flat = self._action_history.flatten()
+        rpm_history_normalized = (self._rpm_history - self.config.hover_rpm) / self.config.rpm_range
+        rpm_history_flat = rpm_history_normalized.flatten()
         
-        return np.concatenate([pos, vel, quat, ang_vel, error, prev_action]).astype(np.float32)
+        return np.concatenate([
+            pos, vel, quat, ang_vel, error, 
+            self._prev_action, action_history_flat, rpm_history_flat
+        ]).astype(np.float32)
     
     def _compute_reward(self, action: np.ndarray) -> Tuple[float, bool]:
         s = self._drone.get_state()
@@ -319,84 +359,65 @@ class QuadrotorEnv(gym.Env):
         ang_vel = np.array([s.angular_velocity.x, s.angular_velocity.y, s.angular_velocity.z])
         
         euler = s.orientation.to_euler_zyx()
-        roll, pitch, yaw = abs(euler.x), abs(euler.y), euler.z
+        roll, pitch = abs(euler.x), abs(euler.y)
         
         error_vec = self.target - pos
         dist = np.linalg.norm(error_vec)
         speed = np.linalg.norm(vel)
-        omega_xy = np.linalg.norm(ang_vel[:2])
-        omega_z = abs(ang_vel[2])
         
-        prev_dist = getattr(self, '_prev_dist', dist)
-        self._prev_dist = dist
+        r_distance = -dist * 0.8
         
-        r_progress = (prev_dist - dist) * 3.0
+        sigma = 0.5
+        r_proximity = 2.5 * np.exp(-(dist ** 2) / sigma)
         
-        r_proximity = np.exp(-dist * 2.0) * 1.5
-        
-        target_dir = error_vec / (dist + 1e-6)
-        forward_body = np.array([np.cos(yaw), np.sin(yaw), 0])
-        heading_alignment = np.dot(forward_body[:2], target_dir[:2])
-        r_heading = heading_alignment * 2.0
-        
-        action_diff = np.linalg.norm(self._prev_action - action) if hasattr(self, '_prev_action') else 0.0
-        r_smooth = -action_diff ** 2 * 0.5
-        
-        r_stability = -omega_xy * 0.1
-        
-        r_orientation = np.exp(-(roll + pitch) * 5.0) * 2.0
-        
-        hover_rpm = self.config.hover_rpm
-        if hasattr(self, '_current_rpm'):
-            rpm_deviation = np.mean((self._current_rpm - hover_rpm) ** 2)
-            r_efficiency = -rpm_deviation * 1e-8
+        if dist > 0.25:
+            target_dir = error_vec / dist
+            approach_speed = np.dot(vel, target_dir)
+            r_velocity = np.clip(approach_speed, -3.0, 3.0) * 1.5
         else:
-            r_efficiency = 0.0
+            r_velocity = -speed * 4.0
         
-        if speed < 0.5:
-            r_anti_spin = -omega_z * 0.3
-        else:
-            r_anti_spin = -omega_z * 0.05
+        tilt_magnitude = np.sqrt(roll ** 2 + pitch ** 2)
+        r_orientation = 2.0 * np.exp(-tilt_magnitude * 6.0)
         
-        r_anti_kamikaze = 0.0
-        if dist < 1.0 and speed > 2.0:
-            r_anti_kamikaze = -1.0
+        omega_magnitude = np.linalg.norm(ang_vel)
+        r_stability = -omega_magnitude * 0.15
         
-        altitude = pos[2]
-        if altitude < 0.3:
-            r_ground = -(0.3 - altitude) * 5.0
-        else:
-            r_ground = 0.0
+        action_delta = action - self._prev_action
+        r_smoothness = -np.dot(action_delta, action_delta) * 0.4
+        
+        height_error = abs(pos[2] - self.target[2])
+        r_altitude = 0.5 * np.exp(-height_error * 3.0)
         
         reward = (
-            r_progress +
+            r_distance +
             r_proximity +
-            r_heading +
-            r_smooth +
-            r_stability +
+            r_velocity +
             r_orientation +
-            r_efficiency +
-            r_anti_spin +
-            r_anti_kamikaze +
-            r_ground
+            r_stability +
+            r_smoothness +
+            r_altitude
         )
         
-        is_hovering = dist < 0.3 and speed < 0.3 and roll < 0.15 and pitch < 0.15
+        is_hovering = dist < 0.25 and speed < 0.25 and tilt_magnitude < 0.12
         if is_hovering:
             self._hover_duration += 1
-            reward += min(self._hover_duration / 20.0, 4.0)
+            hover_bonus = min(self._hover_duration / 15.0, 5.0)
+            reward += hover_bonus
         else:
-            self._hover_duration = max(0, self._hover_duration - 1)
+            self._hover_duration = max(0, self._hover_duration - 2)
+        
+        if pos[2] < 0.2:
+            reward -= (0.2 - pos[2]) * 8.0
         
         terminated = False
-        crashed = False
         
-        if pos[2] < self.config.crash_height:
-            crashed = True
-        elif dist > self.config.crash_distance:
-            crashed = True
-        elif roll > self.config.crash_angle or pitch > self.config.crash_angle:
-            crashed = True
+        crashed = (
+            pos[2] < self.config.crash_height or
+            dist > self.config.crash_distance or
+            roll > self.config.crash_angle or
+            pitch > self.config.crash_angle
+        )
 
         if crashed:
             reward = -100.0
@@ -404,7 +425,7 @@ class QuadrotorEnv(gym.Env):
         
         if dist < self.config.success_distance and speed < self.config.success_velocity:
             self._success_counter += 1
-            reward += 2.0
+            reward += 3.0
         else:
             self._success_counter = max(0, self._success_counter - 1)
         
@@ -420,7 +441,6 @@ class QuadrotorEnv(gym.Env):
             'steps': self._steps,
             'episode_reward': self._episode_reward,
             'success_counter': self._success_counter,
-            'saturation_count': self._saturation_count,
             'sub_step_count': self._drone.get_sub_step_count() if self.config.use_sub_stepping else 1
         }
     

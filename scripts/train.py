@@ -590,8 +590,7 @@ def main():
         min_rpm=float(env_cfg.get('min_rpm', 3000.0)),
         hover_rpm=float(env_cfg.get('hover_rpm', 5500.0)),
         rpm_range=float(env_cfg.get('rpm_range', 15000.0)),
-        action_smoothing=float(env_cfg.get('action_smoothing', 0.5)),
-        saturation_threshold=float(env_cfg.get('saturation_threshold', 0.9)),
+        use_sota_actuator=env_cfg.get('use_sota_actuator', False),
         
         reward_position=float(rew_cfg['position']),
         reward_velocity=float(rew_cfg['velocity']),
@@ -606,7 +605,6 @@ def main():
         reward_height_bonus=float(rew_cfg.get('height_bonus', 0.5)),
         reward_stability_bonus=float(rew_cfg.get('stability_bonus', 0.5)),
         reward_hover_bonus=float(rew_cfg.get('hover_bonus', 1.5)),
-        reward_saturation_penalty=float(rew_cfg.get('saturation_penalty', -0.1)),
         
         crash_height=float(term_cfg['crash_height']),
         crash_distance=float(term_cfg['crash_distance']),

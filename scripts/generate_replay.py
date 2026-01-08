@@ -42,7 +42,9 @@ class DynamicTarget:
         
     def update(self, dt: float) -> np.ndarray:
         self.t += dt
-        if self.mode == 'figure8':
+        if self.mode == 'hover':
+            return self.center.copy()
+        elif self.mode == 'figure8':
             x = 2.0 * np.sin(0.5 * self.t)
             y = 2.0 * np.sin(1.0 * self.t)
             z = self.center[2] + 0.5 * np.sin(0.2 * self.t)
@@ -58,7 +60,7 @@ class DynamicTarget:
             y = 0.0
             z = self.center[2] + 1.5 * np.sin(0.8 * self.t)
             return np.array([x, y, z])
-        return self.center
+        return self.center.copy()
 
 class ReplayGenerator:
     def __init__(self, config: ReplayConfig, env_config: Optional[EnvConfig] = None):
@@ -120,7 +122,6 @@ class ReplayGenerator:
                 self.obs_normalizer.mean = data['mean']
                 self.obs_normalizer.var = data['var']
                 self.obs_normalizer.count = float(data['count'])
-                print(f"Loaded normalizer from {path}")
                 break
                 
     def _normalize_obs(self, obs: np.ndarray) -> np.ndarray:
@@ -185,7 +186,6 @@ class ReplayGenerator:
             data['target'].append(current_target.copy())
             
             if terminated or truncated:
-                print(f"Episode terminated at step {step}. Info: {info}")
                 break
                 
         csv_path = self.logger.save(f'unity_replay_ep{episode_id}.csv')
@@ -233,6 +233,28 @@ def main():
     parser.add_argument('--mode', type=str, default='figure8')
     args = parser.parse_args()
     
+    config_path = os.path.join(ROOT_DIR, 'config', 'train_params.yaml')
+    with open(config_path, 'r') as f:
+        cfg = yaml.safe_load(f)
+        
+    env_cfg = cfg['environment']
+    
+    env_config = EnvConfig(
+        dt=env_cfg['dt'],
+        max_steps=args.steps,
+        domain_randomization=False,
+        wind_enabled=env_cfg['wind_enabled'],
+        motor_dynamics=env_cfg['motor_dynamics'],
+        physics_sub_steps=env_cfg.get('physics_sub_steps', 8),
+        use_sub_stepping=env_cfg.get('use_sub_stepping', True),
+        mass=float(env_cfg.get('mass', 0.6)),
+        max_rpm=float(env_cfg.get('max_rpm', 35000.0)),
+        min_rpm=float(env_cfg.get('min_rpm', 3000.0)),
+        hover_rpm=float(env_cfg.get('hover_rpm', 5500.0)),
+        rpm_range=float(env_cfg.get('rpm_range', 15000.0)),
+        use_sota_actuator=env_cfg.get('use_sota_actuator', False)
+    )
+    
     config = ReplayConfig(
         checkpoint_path=args.checkpoint,
         output_dir=args.output,
@@ -240,7 +262,7 @@ def main():
         trajectory_type=args.mode
     )
     
-    generator = ReplayGenerator(config)
+    generator = ReplayGenerator(config, env_config)
     generator.generate()
 
 if __name__ == "__main__":

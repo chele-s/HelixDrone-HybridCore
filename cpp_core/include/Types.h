@@ -8,6 +8,27 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+struct alignas(16) Vec2 {
+    double x, y;
+    
+    constexpr Vec2() noexcept : x(0), y(0) {}
+    constexpr Vec2(double x_, double y_) noexcept : x(x_), y(y_) {}
+    
+    inline Vec2 operator+(const Vec2& v) const noexcept { return Vec2(x + v.x, y + v.y); }
+    inline Vec2 operator-(const Vec2& v) const noexcept { return Vec2(x - v.x, y - v.y); }
+    inline Vec2 operator*(double s) const noexcept { return Vec2(x * s, y * s); }
+    
+    inline double dot(const Vec2& v) const noexcept { return x * v.x + y * v.y; }
+    
+    inline double normSquared() const noexcept { return x * x + y * y; }
+    inline double norm() const noexcept { return std::sqrt(normSquared()); }
+    
+    inline Vec2 normalized() const noexcept {
+        double n = norm();
+        return n > 1e-12 ? Vec2(x / n, y / n) : Vec2();
+    }
+};
+
 struct alignas(32) Vec3 {
     double x, y, z;
     

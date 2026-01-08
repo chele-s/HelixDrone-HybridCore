@@ -94,8 +94,9 @@ class DroneVisualizer:
         )
         
         if data.target is not None:
+            target_pos = data.target[0] if data.target.ndim == 2 else data.target
             ax.scatter(
-                data.target[0], data.target[1], data.target[2],
+                target_pos[0], target_pos[1], target_pos[2],
                 color=self.config.target_color,
                 s=self.config.target_size,
                 marker='*',
@@ -139,8 +140,9 @@ class DroneVisualizer:
             ax.scatter(positions[-1, i], positions[-1, j], color='red', s=50, marker='s')
             
             if data.target is not None:
+                target_pos = data.target[0] if data.target.ndim == 2 else data.target
                 ax.scatter(
-                    data.target[i], data.target[j],
+                    target_pos[i], target_pos[j],
                     color=self.config.target_color,
                     s=100, marker='*'
                 )
@@ -183,7 +185,8 @@ class DroneVisualizer:
         ax.plot(t, data.positions[:, 1], label='Y', color='#4CAF50')
         ax.plot(t, data.positions[:, 2], label='Z', color='#2196F3')
         if data.target is not None:
-            ax.axhline(y=data.target[2], color='#2196F3', linestyle='--', alpha=0.5)
+            target_z = data.target[0, 2] if data.target.ndim == 2 else data.target[2]
+            ax.axhline(y=target_z, color='#2196F3', linestyle='--', alpha=0.5)
         ax.set_ylabel('Position (m)')
         ax.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
@@ -254,8 +257,9 @@ class DroneVisualizer:
         point, = ax.plot([], [], [], 'o', color=self.config.drone_color, markersize=10)
         
         if data.target is not None:
+            target_pos = data.target[0] if data.target.ndim == 2 else data.target
             ax.scatter(
-                data.target[0], data.target[1], data.target[2],
+                target_pos[0], target_pos[1], target_pos[2],
                 color=self.config.target_color, s=200, marker='*'
             )
         

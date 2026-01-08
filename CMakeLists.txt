@@ -31,6 +31,11 @@ include_directories(cpp_core/include)
 set(PHYSICS_SOURCES
     cpp_core/src/Quadrotor.cpp
     cpp_core/src/PhysicsEngine.cpp
+    cpp_core/src/SOTAActuator.cpp
+    cpp_core/src/StateEstimator.cpp
+    cpp_core/src/ActuatorFailure.cpp
+    cpp_core/src/CollisionWorld.cpp
+    cpp_core/src/PayloadDynamics.cpp
 )
 
 pybind11_add_module(drone_core 

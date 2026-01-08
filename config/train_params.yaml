@@ -27,7 +27,7 @@ training:
   batch_size: 256
   learning_starts: 25000
   train_freq: 2
-  gradient_steps: 2
+  gradient_steps: 4
 
 evaluation:
   freq: 10000
@@ -48,13 +48,12 @@ environment:
   motor_dynamics: true
   physics_sub_steps: 8
   use_sub_stepping: false
+  use_sota_actuator: true
   min_rpm: 2000.0
   hover_rpm: 2750.0
   max_rpm: 35000.0
   rpm_range: 2000.0
   mass: 0.6
-  action_smoothing: 0.5
-  saturation_threshold: 0.9
 
 observation:
   position_scale: 5.0
@@ -75,12 +74,11 @@ rewards:
   height_bonus: 0.5
   stability_bonus: 1.0
   hover_bonus: 1.5
-  saturation_penalty: -0.1
 
 termination:
   crash_height: 0.05
-  crash_distance: 3.0
-  crash_angle: 0.5
+  crash_distance: 10.0
+  crash_angle: 1.5
   success_distance: 0.1
   success_velocity: 0.2
   success_hold_steps: 50

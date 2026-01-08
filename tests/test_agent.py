@@ -368,7 +368,7 @@ class TestEnvironment(unittest.TestCase):
         env = QuadrotorEnv(config=EnvConfig())
         obs, info = env.reset()
         
-        self.assertEqual(obs.shape, (20,))
+        self.assertEqual(obs.shape, (52,))
         self.assertIn('position', info)
         self.assertIn('target', info)
     
@@ -381,7 +381,7 @@ class TestEnvironment(unittest.TestCase):
         action = np.zeros(4, dtype=np.float32)
         obs, reward, terminated, truncated, info = env.step(action)
         
-        self.assertEqual(obs.shape, (20,))
+        self.assertEqual(obs.shape, (52,))
         self.assertIsInstance(reward, float)
         self.assertIsInstance(terminated, bool)
         self.assertIsInstance(truncated, bool)
@@ -392,7 +392,7 @@ class TestEnvironment(unittest.TestCase):
         env = QuadrotorEnv(config=EnvConfig())
         
         self.assertEqual(env.action_space.shape, (4,))
-        self.assertEqual(env.observation_space.shape, (20,))
+        self.assertEqual(env.observation_space.shape, (52,))
         
         self.assertEqual(env.action_space.low.tolist(), [-1.0] * 4)
         self.assertEqual(env.action_space.high.tolist(), [1.0] * 4)
