@@ -50,7 +50,7 @@ checkpointing:
 environment:
   dt: 0.01
   max_steps: 1000
-  num_envs: 4
+  num_envs: 16
   task: hover
   domain_randomization: true
   wind_enabled: true
