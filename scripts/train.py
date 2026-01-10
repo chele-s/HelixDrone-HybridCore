@@ -488,11 +488,7 @@ class Trainer:
             if self.timesteps >= self.config.learning_starts:
                 if self.timesteps % self.config.train_freq == 0:
                     for _ in range(self.config.gradient_steps):
-                        t0 = time.time()
                         metrics = self.agent.update(self.buffer, self.config.batch_size)
-                        dt = time.time() - t0
-                        if self.timesteps % 1000 == 0:
-                            print(f"[PROFILE] agent.update took {dt*1000:.1f}ms")
                         if metrics:
                             history['actor_loss'].append(metrics.get('actor_loss', 0))
                             history['critic_loss'].append(metrics.get('critic_loss', 0))
