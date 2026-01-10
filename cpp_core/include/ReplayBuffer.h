@@ -622,11 +622,11 @@ public:
           seq_len_(seq_len),
           ptr_(0),
           size_(0),
+          valid_count_(0),
           current_episode_id_(0),
           data_(capacity, obs_dim, action_dim),
           rng_(std::random_device{}()),
-          valid_mask_((capacity + 63) / 64, 0),
-          valid_cache_dirty_(true) {}
+          valid_mask_((capacity + 63) / 64, 0) {}
     
     void push(const float* obs, const float* action, float reward, 
               const float* next_obs, float done) noexcept {
@@ -646,8 +646,6 @@ public:
     }
     
     SampleResult sample(size_t batch_size) {
-        if (valid_cache_dirty_) rebuildValidCache();
-        
         SampleResult result;
         result.batch_size = batch_size;
         result.seq_len = seq_len_;
@@ -663,24 +661,32 @@ public:
         result.masks.resize(total_steps, 1.0f);
         result.start_indices.resize(batch_size);
         
-        size_t n_valid = valid_cache_.size();
-        if (n_valid == 0) return result;
+        if (valid_count_ == 0) return result;
         
-        std::vector<size_t> selected(batch_size);
-        if (n_valid < batch_size) {
-            std::uniform_int_distribution<size_t> dist(0, n_valid - 1);
-            for (size_t i = 0; i < batch_size; ++i) selected[i] = valid_cache_[dist(rng_)];
-        } else {
-            std::sample(valid_cache_.begin(), valid_cache_.end(), selected.begin(),
-                        batch_size, rng_);
+        std::uniform_int_distribution<size_t> dist(0, size_ - 1);
+        size_t collected = 0;
+        size_t max_attempts = batch_size * 100;
+        size_t attempts = 0;
+        
+        while (collected < batch_size && attempts < max_attempts) {
+            size_t idx = dist(rng_);
+            if (checkBit(idx)) {
+                result.start_indices[collected] = idx;
+                ++collected;
+            }
+            ++attempts;
         }
         
-        std::copy(selected.begin(), selected.end(), result.start_indices.begin());
+        if (collected < batch_size) {
+            for (size_t i = collected; i < batch_size; ++i) {
+                result.start_indices[i] = result.start_indices[i % std::max(collected, size_t(1))];
+            }
+        }
         
         AlignedVector<float> temp_rewards(total_steps);
         AlignedVector<float> temp_dones(total_steps);
         
-        data_.gatherSequences(selected.data(), batch_size, seq_len_,
+        data_.gatherSequences(result.start_indices.data(), batch_size, seq_len_,
                               result.obs_seq.data(), result.next_obs_seq.data(),
                               result.action_seq.data(), temp_rewards.data(), temp_dones.data());
         
@@ -694,22 +700,24 @@ public:
     
     size_t size() const noexcept { return size_; }
     size_t capacity() const noexcept { return capacity_; }
-    bool isReady(size_t batch_size) { 
-        if (valid_cache_dirty_) rebuildValidCache();
-        return valid_cache_.size() >= batch_size; 
-    }
+    bool isReady(size_t batch_size) const noexcept { return valid_count_ >= batch_size; }
 
 private:
     void updateValidity(size_t ptr) noexcept {
-        valid_cache_dirty_ = true;
         for (size_t offset = 0; offset < seq_len_; ++offset) {
             size_t start = (ptr + capacity_ - offset) % capacity_;
-            clearBit(start);
+            if (checkBit(start)) {
+                clearBit(start);
+                --valid_count_;
+            }
         }
         
         if (size_ >= seq_len_) {
             size_t candidate = (ptr + capacity_ - seq_len_ + 1) % capacity_;
-            if (isValidSequence(candidate)) setBit(candidate);
+            if (isValidSequence(candidate) && !checkBit(candidate)) {
+                setBit(candidate);
+                ++valid_count_;
+            }
         }
     }
     
@@ -723,37 +731,18 @@ private:
         return true;
     }
     
-    void rebuildValidCache() {
-        valid_cache_.clear();
-        valid_cache_.reserve(size_ / 2);
-        for (size_t i = 0; i < (capacity_ + 63) / 64; ++i) {
-            uint64_t bits = valid_mask_[i];
-            while (bits) {
-                #ifdef _MSC_VER
-                unsigned long bit;
-                _BitScanForward64(&bit, bits);
-                #else
-                size_t bit = __builtin_ctzll(bits);
-                #endif
-                size_t idx = i * 64 + bit;
-                if (idx < capacity_) valid_cache_.push_back(idx);
-                bits &= bits - 1;
-            }
-        }
-        valid_cache_dirty_ = false;
+    bool checkBit(size_t idx) const noexcept { 
+        return (valid_mask_[idx / 64] & (1ULL << (idx % 64))) != 0; 
     }
-    
     void setBit(size_t idx) noexcept { valid_mask_[idx / 64] |= (1ULL << (idx % 64)); }
     void clearBit(size_t idx) noexcept { valid_mask_[idx / 64] &= ~(1ULL << (idx % 64)); }
     
     size_t capacity_, obs_dim_, action_dim_, seq_len_;
-    size_t ptr_, size_;
+    size_t ptr_, size_, valid_count_;
     int64_t current_episode_id_;
     SequenceBlock data_;
     mutable std::mt19937 rng_;
     AlignedVector<uint64_t> valid_mask_;
-    std::vector<size_t> valid_cache_;
-    bool valid_cache_dirty_;
 };
 
 class SequencePrioritizedReplayBuffer {
@@ -788,13 +777,13 @@ public:
           frame_(1),
           ptr_(0),
           size_(0),
+          valid_count_(0),
           current_episode_id_(0),
           max_priority_(1.0),
           data_(capacity, obs_dim, action_dim),
           priorities_(capacity, 0.0),
           rng_(std::random_device{}()),
-          valid_mask_((capacity + 63) / 64, 0),
-          valid_cache_dirty_(true) {}
+          valid_mask_((capacity + 63) / 64, 0) {}
     
     double beta() const noexcept {
         double progress = static_cast<double>(frame_) / static_cast<double>(beta_frames_);
@@ -820,8 +809,6 @@ public:
     }
     
     SampleResult sample(size_t batch_size) {
-        if (valid_cache_dirty_) rebuildValidCache();
-        
         SampleResult result;
         result.batch_size = batch_size;
         result.seq_len = seq_len_;
@@ -838,45 +825,43 @@ public:
         result.weights.resize(batch_size);
         result.start_indices.resize(batch_size);
         
-        size_t n_valid = valid_cache_.size();
-        if (n_valid == 0) return result;
+        if (valid_count_ == 0) return result;
         
-        AlignedVector<double> seq_priorities(n_valid);
-        double total_priority = 0.0;
-        for (size_t i = 0; i < n_valid; ++i) {
-            double p = 0.0;
-            for (size_t t = 0; t < seq_len_; ++t) {
-                p += priorities_[(valid_cache_[i] + t) % capacity_];
+        std::uniform_int_distribution<size_t> dist(0, size_ - 1);
+        
+        size_t collected = 0;
+        size_t max_attempts = batch_size * 50;
+        size_t attempts = 0;
+        
+        while (collected < batch_size && attempts < max_attempts) {
+            size_t idx = dist(rng_);
+            if (checkBit(idx)) {
+                result.start_indices[collected] = idx;
+                ++collected;
             }
-            seq_priorities[i] = p / static_cast<double>(seq_len_);
-            total_priority += seq_priorities[i];
+            ++attempts;
         }
         
-        if (total_priority < 1e-10) total_priority = 1e-10;
-        
-        std::vector<size_t> selected_idx(batch_size);
-        std::uniform_real_distribution<double> dist(0.0, 1.0);
-        double segment = total_priority / static_cast<double>(batch_size);
-        
-        for (size_t i = 0; i < batch_size; ++i) {
-            double target = (static_cast<double>(i) + dist(rng_)) * segment;
-            double cumsum = 0.0;
-            for (size_t j = 0; j < n_valid; ++j) {
-                cumsum += seq_priorities[j];
-                if (cumsum >= target) {
-                    selected_idx[i] = j;
-                    break;
-                }
+        if (collected < batch_size) {
+            for (size_t i = collected; i < batch_size; ++i) {
+                size_t src = i % std::max(collected, size_t(1));
+                result.start_indices[i] = result.start_indices[src];
             }
-            if (selected_idx[i] >= n_valid) selected_idx[i] = n_valid - 1;
         }
         
         double current_beta = beta();
         double max_weight = 0.0;
+        double total_priority = 0.0;
+        AlignedVector<double> selected_priorities(batch_size);
         
         for (size_t i = 0; i < batch_size; ++i) {
-            result.start_indices[i] = valid_cache_[selected_idx[i]];
-            double prob = seq_priorities[selected_idx[i]] / total_priority;
+            selected_priorities[i] = computeSeqPriority(result.start_indices[i]);
+            total_priority += selected_priorities[i];
+        }
+        if (total_priority < 1e-10) total_priority = 1.0;
+        
+        for (size_t i = 0; i < batch_size; ++i) {
+            double prob = selected_priorities[i] / total_priority;
             double w = std::pow(static_cast<double>(size_) * prob, -current_beta);
             result.weights[i] = static_cast<float>(w);
             max_weight = std::max(max_weight, w);
@@ -916,21 +901,23 @@ public:
     
     size_t size() const noexcept { return size_; }
     size_t capacity() const noexcept { return capacity_; }
-    bool isReady(size_t batch_size) {
-        if (valid_cache_dirty_) rebuildValidCache();
-        return valid_cache_.size() >= batch_size;
-    }
+    bool isReady(size_t batch_size) const noexcept { return valid_count_ >= batch_size; }
 
 private:
     void updateValidity(size_t ptr) noexcept {
-        valid_cache_dirty_ = true;
         for (size_t offset = 0; offset < seq_len_; ++offset) {
             size_t start = (ptr + capacity_ - offset) % capacity_;
-            clearBit(start);
+            if (checkBit(start)) {
+                clearBit(start);
+                --valid_count_;
+            }
         }
         if (size_ >= seq_len_) {
             size_t candidate = (ptr + capacity_ - seq_len_ + 1) % capacity_;
-            if (isValidSequence(candidate)) setBit(candidate);
+            if (isValidSequence(candidate) && !checkBit(candidate)) {
+                setBit(candidate);
+                ++valid_count_;
+            }
         }
     }
     
@@ -944,26 +931,21 @@ private:
         return true;
     }
     
-    void rebuildValidCache() {
-        valid_cache_.clear();
-        valid_cache_.reserve(size_ / 2);
-        for (size_t i = 0; i < (capacity_ + 63) / 64; ++i) {
-            uint64_t bits = valid_mask_[i];
-            while (bits) {
-                #ifdef _MSC_VER
-                unsigned long bit;
-                _BitScanForward64(&bit, bits);
-                #else
-                size_t bit = __builtin_ctzll(bits);
-                #endif
-                size_t idx = i * 64 + bit;
-                if (idx < capacity_) valid_cache_.push_back(idx);
-                bits &= bits - 1;
-            }
+    double computeSeqPriority(size_t start) const noexcept {
+        double p = 0.0;
+        for (size_t t = 0; t < seq_len_; ++t) {
+            p += priorities_[(start + t) % capacity_];
         }
-        valid_cache_dirty_ = false;
+        return p / static_cast<double>(seq_len_);
     }
     
+    double computeMaxSeqPriority() const noexcept {
+        return std::pow(max_priority_.load(), alpha_);
+    }
+    
+    bool checkBit(size_t idx) const noexcept { 
+        return (valid_mask_[idx / 64] & (1ULL << (idx % 64))) != 0; 
+    }
     void setBit(size_t idx) noexcept { valid_mask_[idx / 64] |= (1ULL << (idx % 64)); }
     void clearBit(size_t idx) noexcept { valid_mask_[idx / 64] &= ~(1ULL << (idx % 64)); }
     
@@ -971,15 +953,13 @@ private:
     double alpha_, beta_start_, epsilon_;
     size_t beta_frames_;
     std::atomic<size_t> frame_;
-    size_t ptr_, size_;
+    size_t ptr_, size_, valid_count_;
     int64_t current_episode_id_;
     std::atomic<double> max_priority_;
     SequenceBlock data_;
     AlignedVector<double> priorities_;
     mutable std::mt19937 rng_;
     AlignedVector<uint64_t> valid_mask_;
-    std::vector<size_t> valid_cache_;
-    bool valid_cache_dirty_;
 };
 
 }

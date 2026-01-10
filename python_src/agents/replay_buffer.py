@@ -697,6 +697,7 @@ class SequenceReplayBuffer:
         
         self.ptr = 0
         self.size = 0
+        self.valid_count = 0
         self.current_episode_id = 0
         self.valid_mask = np.zeros(capacity, dtype=bool)
     
@@ -758,43 +759,47 @@ class SequenceReplayBuffer:
             )
     
     def _update_validity(self, ptr: int):
+        for offset in range(self.sequence_length):
+            start_idx = (ptr - offset) % self.capacity
+            if self.valid_mask[start_idx]:
+                self.valid_mask[start_idx] = False
+                self.valid_count -= 1
         
-        indices = (ptr - np.arange(self.sequence_length)[::-1]) % self.capacity
-        
-        for start_idx in indices:
-            self.valid_mask[start_idx] = False
-            
-            end_idx = (start_idx + self.sequence_length - 1) % self.capacity
-            if self.episode_ids[start_idx] != self.episode_ids[end_idx]:
-                continue
-                
-            check_indices = (start_idx + np.arange(self.sequence_length - 1)) % self.capacity
-            if np.any(self.dones[check_indices] > 0.5):
-                continue
-            
-            # Additional check: circular buffer overflow prevention (old vs new data)
-            # The ptr (where we just wrote) is the newest data.
-            # If a sequence that supposedly starts at 'start_idx' wraps around
-            # and includes 'ptr' as an "old" data point, it's invalid.
-            # But here `ptr` is the LATEST data point.
-            # A sequence starting at `start_idx` ends at `start_idx + L - 1`.
-            # If `ptr` is inside `[start_idx, start_idx + L - 1]`, then `ptr` is part of this sequence.
-            # Since `ptr` is the newest, `start_idx` must be `<= ptr`.
-            # If `start_idx > ptr`, it means `start_idx` is old data, and it wraps around to `ptr`.
-            # But `episode_ids` would catch this because `ptr` (new) has higher episode_id than `start_idx` (old).
-            # So `episode_ids` check is sufficient.
-            
-            self.valid_mask[start_idx] = True
+        if self.size >= self.sequence_length:
+            candidate = (ptr - self.sequence_length + 1) % self.capacity
+            if self._is_valid_sequence(candidate) and not self.valid_mask[candidate]:
+                self.valid_mask[candidate] = True
+                self.valid_count += 1
+    
+    def _is_valid_sequence(self, start: int) -> bool:
+        end = (start + self.sequence_length - 1) % self.capacity
+        if self.episode_ids[start] != self.episode_ids[end]:
+            return False
+        for t in range(self.sequence_length - 1):
+            idx = (start + t) % self.capacity
+            if self.dones[idx] > 0.5:
+                return False
+        return True
 
     def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
-        valid_starts = np.where(self.valid_mask)[0]
+        if self.valid_count == 0:
+            raise ValueError("Not enough valid sequences in buffer")
         
-        if len(valid_starts) < batch_size:
-            if len(valid_starts) == 0:
-                raise ValueError("Not enough valid sequences in buffer")
-            indices = np.random.choice(valid_starts, size=batch_size, replace=True)
-        else:
-            indices = np.random.choice(valid_starts, size=batch_size, replace=False)
+        indices = np.empty(batch_size, dtype=np.int64)
+        collected = 0
+        max_attempts = batch_size * 100
+        attempts = 0
+        
+        while collected < batch_size and attempts < max_attempts:
+            idx = np.random.randint(0, self.size)
+            if self.valid_mask[idx]:
+                indices[collected] = idx
+                collected += 1
+            attempts += 1
+        
+        if collected < batch_size:
+            for i in range(collected, batch_size):
+                indices[i] = indices[i % max(collected, 1)]
         
         seq_indices = (indices[:, None] + np.arange(self.sequence_length)) % self.capacity
         
@@ -819,7 +824,7 @@ class SequenceReplayBuffer:
         return self.size
     
     def is_ready(self, batch_size: int) -> bool:
-        return self.valid_mask.sum() >= batch_size
+        return self.valid_count >= batch_size
 
 
 class SequencePrioritizedReplayBuffer:
@@ -858,6 +863,7 @@ class SequencePrioritizedReplayBuffer:
         
         self.ptr = 0
         self.size = 0
+        self.valid_count = 0
         self.current_episode_id = 0
         self.valid_mask = np.zeros(capacity, dtype=bool)
     
@@ -924,58 +930,65 @@ class SequencePrioritizedReplayBuffer:
             )
     
     def _update_validity(self, ptr: int):
+        for offset in range(self.sequence_length):
+            start_idx = (ptr - offset) % self.capacity
+            if self.valid_mask[start_idx]:
+                self.valid_mask[start_idx] = False
+                self.valid_count -= 1
         
-        indices = (ptr - np.arange(self.sequence_length)[::-1]) % self.capacity
-        
-        for start_idx in indices:
-            self.valid_mask[start_idx] = False
-            
-            end_idx = (start_idx + self.sequence_length - 1) % self.capacity
-            if self.episode_ids[start_idx] != self.episode_ids[end_idx]:
-                continue
-                
-            check_indices = (start_idx + np.arange(self.sequence_length - 1)) % self.capacity
-            if np.any(self.dones[check_indices] > 0.5):
-                continue
-            
-            self.valid_mask[start_idx] = True
+        if self.size >= self.sequence_length:
+            candidate = (ptr - self.sequence_length + 1) % self.capacity
+            if self._is_valid_sequence(candidate) and not self.valid_mask[candidate]:
+                self.valid_mask[candidate] = True
+                self.valid_count += 1
+    
+    def _is_valid_sequence(self, start: int) -> bool:
+        end = (start + self.sequence_length - 1) % self.capacity
+        if self.episode_ids[start] != self.episode_ids[end]:
+            return False
+        for t in range(self.sequence_length - 1):
+            idx = (start + t) % self.capacity
+            if self.dones[idx] > 0.5:
+                return False
+        return True
 
     def sample(self, batch_size: int) -> Dict[str, Any]:
-        valid_starts = np.where(self.valid_mask)[0]
-        
-        if len(valid_starts) == 0:
+        if self.valid_count == 0:
             raise ValueError("Not enough valid sequences in buffer")
         
-        start_matrix = valid_starts[:, None] + np.arange(self.sequence_length)
-        start_matrix %= self.capacity
+        max_seq_priority = self.max_priority ** self.alpha
+        if max_seq_priority < 1e-10:
+            max_seq_priority = 1.0
         
-        seq_priorities = self.priorities[start_matrix]
-        mean_priorities = seq_priorities.mean(axis=1)
+        indices = np.empty(batch_size, dtype=np.int64)
+        collected = 0
+        max_attempts = batch_size * 50
+        attempts = 0
         
-        total_priority = mean_priorities.sum()
-        if total_priority <= 0:
-            probabilities = np.ones(len(valid_starts)) / len(valid_starts)
-        else:
-            probabilities = mean_priorities / total_priority
-            
-        if len(valid_starts) < batch_size:
-            selected_indices = np.random.choice(
-                len(valid_starts), size=batch_size, replace=True, p=probabilities
-            )
-        else:
-            selected_indices = np.random.choice(
-                len(valid_starts), size=batch_size, replace=False, p=probabilities
-            )
-            
-        start_indices = valid_starts[selected_indices]
-        selected_priorities = mean_priorities[selected_indices]
+        while collected < batch_size and attempts < max_attempts:
+            idx = np.random.randint(0, self.size)
+            if self.valid_mask[idx]:
+                indices[collected] = idx
+                collected += 1
+            attempts += 1
+        
+        if collected < batch_size:
+            for i in range(collected, batch_size):
+                src = i % max(collected, 1)
+                indices[i] = indices[src]
+        
+        selected_priorities = np.array([self._compute_seq_priority(idx) for idx in indices])
+        
+        total_priority = selected_priorities.sum()
+        if total_priority < 1e-10:
+            total_priority = 1.0
         
         weights = (self.size * (selected_priorities / total_priority + 1e-10)) ** (-self.beta)
         weights = weights / (weights.max() + 1e-10)
         
         self.frame += 1
         
-        seq_indices = (start_indices[:, None] + np.arange(self.sequence_length)) % self.capacity
+        seq_indices = (indices[:, None] + np.arange(self.sequence_length)) % self.capacity
         
         obs_sequences = self.observations[seq_indices]
         next_obs_sequences = self.next_observations[seq_indices]
@@ -993,8 +1006,14 @@ class SequencePrioritizedReplayBuffer:
             'dones': torch.as_tensor(done_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
             'masks': torch.as_tensor(masks, dtype=torch.float32, device=self.device),
             'weights': torch.as_tensor(weights, dtype=torch.float32, device=self.device).unsqueeze(-1),
-            'sequence_indices': start_indices
+            'sequence_indices': indices
         }
+    
+    def _compute_seq_priority(self, start: int) -> float:
+        total = 0.0
+        for t in range(self.sequence_length):
+            total += self.priorities[(start + t) % self.capacity]
+        return total / self.sequence_length
     
     def update_priorities(
         self,
@@ -1016,4 +1035,4 @@ class SequencePrioritizedReplayBuffer:
         return self.size
     
     def is_ready(self, batch_size: int) -> bool:
-        return self.valid_mask.sum() >= batch_size
+        return self.valid_count >= batch_size
