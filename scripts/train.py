@@ -68,6 +68,7 @@ class TrainConfig:
     lstm_hidden: int = 128
     lstm_layers: int = 2
     sequence_length: int = 16
+    burn_in_length: int = 0
 
 
 class RollingStats:
@@ -208,6 +209,7 @@ class Trainer:
                 lstm_hidden=self.config.lstm_hidden,
                 lstm_layers=self.config.lstm_layers,
                 sequence_length=self.config.sequence_length,
+                burn_in_length=self.config.burn_in_length,
                 lr_actor=self.config.lr_actor,
                 lr_critic=self.config.lr_critic,
                 gamma=self.config.gamma,
@@ -241,6 +243,7 @@ class Trainer:
                     obs_dim=self.base_obs_dim,
                     action_dim=self.action_dim,
                     sequence_length=self.config.sequence_length,
+                    burn_in_length=self.config.burn_in_length,
                     alpha=self.config.per_alpha,
                     beta_start=self.config.per_beta_start,
                     beta_frames=self.config.total_timesteps
@@ -251,7 +254,8 @@ class Trainer:
                     device=self.device,
                     obs_dim=self.base_obs_dim,
                     action_dim=self.action_dim,
-                    sequence_length=self.config.sequence_length
+                    sequence_length=self.config.sequence_length,
+                    burn_in_length=self.config.burn_in_length
                 )
         else:
             if self.config.use_per:
@@ -686,7 +690,12 @@ def main():
         
         seed=cfg['seed'],
         device=cfg['device'],
-        num_envs=cfg['environment']['num_envs']
+        num_envs=cfg['environment']['num_envs'],
+        
+        lstm_hidden=cfg['lstm'].get('hidden_dim', 128),
+        lstm_layers=cfg['lstm'].get('num_layers', 2),
+        sequence_length=cfg['lstm'].get('sequence_length', 16),
+        burn_in_length=cfg['lstm'].get('burn_in', 0)
     )
     
     env_cfg = cfg['environment']

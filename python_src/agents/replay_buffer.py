@@ -540,18 +540,20 @@ class CppSequenceReplayBuffer:
         device: torch.device,
         obs_dim: int,
         action_dim: int,
-        sequence_length: int = 16
+        sequence_length: int = 16,
+        burn_in_length: int = 0
     ):
         self.device = device
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.sequence_length = sequence_length
+        self.burn_in_length = burn_in_length
         
         if _HAS_CPP_SEQ_BUFFER:
             self._cpp = _cpp_core.SequenceReplayBuffer(capacity, obs_dim, action_dim, sequence_length)
             self._use_cpp = True
         else:
-            self._py = SequenceReplayBuffer(capacity, device, obs_dim, action_dim, sequence_length)
+            self._py = SequenceReplayBuffer(capacity, device, obs_dim, action_dim, sequence_length, burn_in_length)
             self._use_cpp = False
     
     def push(self, obs: np.ndarray, action: np.ndarray, reward: float, 
@@ -604,6 +606,7 @@ class CppSequencePrioritizedReplayBuffer:
         obs_dim: int,
         action_dim: int,
         sequence_length: int = 16,
+        burn_in_length: int = 0,
         alpha: float = 0.6,
         beta_start: float = 0.4,
         beta_frames: int = 100000,
@@ -613,6 +616,7 @@ class CppSequencePrioritizedReplayBuffer:
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.sequence_length = sequence_length
+        self.burn_in_length = burn_in_length
         
         if _HAS_CPP_SEQ_BUFFER:
             self._cpp = _cpp_core.SequencePrioritizedReplayBuffer(
@@ -620,7 +624,7 @@ class CppSequencePrioritizedReplayBuffer:
             self._use_cpp = True
         else:
             self._py = SequencePrioritizedReplayBuffer(
-                capacity, device, obs_dim, action_dim, sequence_length, alpha, beta_start, beta_frames, epsilon)
+                capacity, device, obs_dim, action_dim, sequence_length, burn_in_length, alpha, beta_start, beta_frames, epsilon)
             self._use_cpp = False
     
     def push(self, obs: np.ndarray, action: np.ndarray, reward: float,
@@ -680,13 +684,16 @@ class SequenceReplayBuffer:
         device: torch.device,
         obs_dim: int,
         action_dim: int,
-        sequence_length: int = 16
+        sequence_length: int = 16,
+        burn_in_length: int = 0
     ):
         self.capacity = capacity
         self.device = device
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.sequence_length = sequence_length
+        self.burn_in_length = burn_in_length
+        self.total_sequence_length = sequence_length + burn_in_length
         
         self.observations = np.zeros((capacity, obs_dim), dtype=np.float32)
         self.actions = np.zeros((capacity, action_dim), dtype=np.float32)
@@ -759,23 +766,23 @@ class SequenceReplayBuffer:
             )
     
     def _update_validity(self, ptr: int):
-        for offset in range(self.sequence_length):
+        for offset in range(self.total_sequence_length):
             start_idx = (ptr - offset) % self.capacity
             if self.valid_mask[start_idx]:
                 self.valid_mask[start_idx] = False
                 self.valid_count -= 1
         
-        if self.size >= self.sequence_length:
-            candidate = (ptr - self.sequence_length + 1) % self.capacity
+        if self.size >= self.total_sequence_length:
+            candidate = (ptr - self.total_sequence_length + 1) % self.capacity
             if self._is_valid_sequence(candidate) and not self.valid_mask[candidate]:
                 self.valid_mask[candidate] = True
                 self.valid_count += 1
     
     def _is_valid_sequence(self, start: int) -> bool:
-        end = (start + self.sequence_length - 1) % self.capacity
+        end = (start + self.total_sequence_length - 1) % self.capacity
         if self.episode_ids[start] != self.episode_ids[end]:
             return False
-        for t in range(self.sequence_length - 1):
+        for t in range(self.total_sequence_length - 1):
             idx = (start + t) % self.capacity
             if self.dones[idx] > 0.5:
                 return False
@@ -801,24 +808,42 @@ class SequenceReplayBuffer:
             for i in range(collected, batch_size):
                 indices[i] = indices[i % max(collected, 1)]
         
-        seq_indices = (indices[:, None] + np.arange(self.sequence_length)) % self.capacity
+        seq_indices = (indices[:, None] + np.arange(self.total_sequence_length)) % self.capacity
         
         obs_sequences = self.observations[seq_indices]
         next_obs_sequences = self.next_observations[seq_indices]
         action_sequences = self.actions[seq_indices]
         reward_sequences = self.rewards[seq_indices]
         done_sequences = self.dones[seq_indices]
-        masks = np.ones((batch_size, self.sequence_length), dtype=np.float32)
+        masks = np.ones((batch_size, self.total_sequence_length), dtype=np.float32)
         
-        return {
-            'obs_seq': torch.as_tensor(obs_sequences, dtype=torch.float32, device=self.device),
-            'next_obs_seq': torch.as_tensor(next_obs_sequences, dtype=torch.float32, device=self.device),
-            'action_seq': torch.as_tensor(action_sequences, dtype=torch.float32, device=self.device),
-            'actions': torch.as_tensor(action_sequences[:, -1, :], dtype=torch.float32, device=self.device),
-            'rewards': torch.as_tensor(reward_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
-            'dones': torch.as_tensor(done_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
-            'masks': torch.as_tensor(masks, dtype=torch.float32, device=self.device)
+        burn_in_obs = obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
+        burn_in_next_obs = next_obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
+        burn_in_actions = action_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
+        
+        train_obs = obs_sequences[:, self.burn_in_length:, :]
+        train_next_obs = next_obs_sequences[:, self.burn_in_length:, :]
+        train_actions = action_sequences[:, self.burn_in_length:, :]
+        train_rewards = reward_sequences[:, self.burn_in_length:]
+        train_dones = done_sequences[:, self.burn_in_length:]
+        train_masks = masks[:, self.burn_in_length:]
+        
+        result = {
+            'obs_seq': torch.as_tensor(train_obs, dtype=torch.float32, device=self.device),
+            'next_obs_seq': torch.as_tensor(train_next_obs, dtype=torch.float32, device=self.device),
+            'action_seq': torch.as_tensor(train_actions, dtype=torch.float32, device=self.device),
+            'actions': torch.as_tensor(train_actions[:, -1, :], dtype=torch.float32, device=self.device),
+            'rewards': torch.as_tensor(train_rewards[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'dones': torch.as_tensor(train_dones[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'masks': torch.as_tensor(train_masks, dtype=torch.float32, device=self.device)
         }
+        
+        if self.burn_in_length > 0:
+            result['burn_in_obs'] = torch.as_tensor(burn_in_obs, dtype=torch.float32, device=self.device)
+            result['burn_in_next_obs'] = torch.as_tensor(burn_in_next_obs, dtype=torch.float32, device=self.device)
+            result['burn_in_actions'] = torch.as_tensor(burn_in_actions, dtype=torch.float32, device=self.device)
+        
+        return result
     
     def __len__(self) -> int:
         return self.size
@@ -835,6 +860,7 @@ class SequencePrioritizedReplayBuffer:
         obs_dim: int,
         action_dim: int,
         sequence_length: int = 16,
+        burn_in_length: int = 0,
         alpha: float = 0.6,
         beta_start: float = 0.4,
         beta_frames: int = 100000,
@@ -845,6 +871,8 @@ class SequencePrioritizedReplayBuffer:
         self.obs_dim = obs_dim
         self.action_dim = action_dim
         self.sequence_length = sequence_length
+        self.burn_in_length = burn_in_length
+        self.total_sequence_length = sequence_length + burn_in_length
         self.alpha = alpha
         self.beta_start = beta_start
         self.beta_frames = beta_frames
@@ -930,23 +958,23 @@ class SequencePrioritizedReplayBuffer:
             )
     
     def _update_validity(self, ptr: int):
-        for offset in range(self.sequence_length):
+        for offset in range(self.total_sequence_length):
             start_idx = (ptr - offset) % self.capacity
             if self.valid_mask[start_idx]:
                 self.valid_mask[start_idx] = False
                 self.valid_count -= 1
         
-        if self.size >= self.sequence_length:
-            candidate = (ptr - self.sequence_length + 1) % self.capacity
+        if self.size >= self.total_sequence_length:
+            candidate = (ptr - self.total_sequence_length + 1) % self.capacity
             if self._is_valid_sequence(candidate) and not self.valid_mask[candidate]:
                 self.valid_mask[candidate] = True
                 self.valid_count += 1
     
     def _is_valid_sequence(self, start: int) -> bool:
-        end = (start + self.sequence_length - 1) % self.capacity
+        end = (start + self.total_sequence_length - 1) % self.capacity
         if self.episode_ids[start] != self.episode_ids[end]:
             return False
-        for t in range(self.sequence_length - 1):
+        for t in range(self.total_sequence_length - 1):
             idx = (start + t) % self.capacity
             if self.dones[idx] > 0.5:
                 return False
@@ -988,32 +1016,50 @@ class SequencePrioritizedReplayBuffer:
         
         self.frame += 1
         
-        seq_indices = (indices[:, None] + np.arange(self.sequence_length)) % self.capacity
+        seq_indices = (indices[:, None] + np.arange(self.total_sequence_length)) % self.capacity
         
         obs_sequences = self.observations[seq_indices]
         next_obs_sequences = self.next_observations[seq_indices]
         action_sequences = self.actions[seq_indices]
         reward_sequences = self.rewards[seq_indices]
         done_sequences = self.dones[seq_indices]
-        masks = np.ones((batch_size, self.sequence_length), dtype=np.float32)
+        masks = np.ones((batch_size, self.total_sequence_length), dtype=np.float32)
         
-        return {
-            'obs_seq': torch.as_tensor(obs_sequences, dtype=torch.float32, device=self.device),
-            'next_obs_seq': torch.as_tensor(next_obs_sequences, dtype=torch.float32, device=self.device),
-            'action_seq': torch.as_tensor(action_sequences, dtype=torch.float32, device=self.device),
-            'actions': torch.as_tensor(action_sequences[:, -1, :], dtype=torch.float32, device=self.device),
-            'rewards': torch.as_tensor(reward_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
-            'dones': torch.as_tensor(done_sequences[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
-            'masks': torch.as_tensor(masks, dtype=torch.float32, device=self.device),
+        burn_in_obs = obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
+        burn_in_next_obs = next_obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
+        burn_in_actions = action_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
+        
+        train_obs = obs_sequences[:, self.burn_in_length:, :]
+        train_next_obs = next_obs_sequences[:, self.burn_in_length:, :]
+        train_actions = action_sequences[:, self.burn_in_length:, :]
+        train_rewards = reward_sequences[:, self.burn_in_length:]
+        train_dones = done_sequences[:, self.burn_in_length:]
+        train_masks = masks[:, self.burn_in_length:]
+        
+        result = {
+            'obs_seq': torch.as_tensor(train_obs, dtype=torch.float32, device=self.device),
+            'next_obs_seq': torch.as_tensor(train_next_obs, dtype=torch.float32, device=self.device),
+            'action_seq': torch.as_tensor(train_actions, dtype=torch.float32, device=self.device),
+            'actions': torch.as_tensor(train_actions[:, -1, :], dtype=torch.float32, device=self.device),
+            'rewards': torch.as_tensor(train_rewards[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'dones': torch.as_tensor(train_dones[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'masks': torch.as_tensor(train_masks, dtype=torch.float32, device=self.device),
             'weights': torch.as_tensor(weights, dtype=torch.float32, device=self.device).unsqueeze(-1),
             'sequence_indices': indices
         }
+        
+        if self.burn_in_length > 0:
+            result['burn_in_obs'] = torch.as_tensor(burn_in_obs, dtype=torch.float32, device=self.device)
+            result['burn_in_next_obs'] = torch.as_tensor(burn_in_next_obs, dtype=torch.float32, device=self.device)
+            result['burn_in_actions'] = torch.as_tensor(burn_in_actions, dtype=torch.float32, device=self.device)
+        
+        return result
     
     def _compute_seq_priority(self, start: int) -> float:
         total = 0.0
-        for t in range(self.sequence_length):
+        for t in range(self.total_sequence_length):
             total += self.priorities[(start + t) % self.capacity]
-        return total / self.sequence_length
+        return total / self.total_sequence_length
     
     def update_priorities(
         self,
@@ -1022,8 +1068,8 @@ class SequencePrioritizedReplayBuffer:
     ) -> None:
         priorities = (np.abs(td_errors) + self.epsilon) ** self.alpha
         
-        indices = (sequence_indices[:, None] + np.arange(self.sequence_length)) % self.capacity
-        priorities_expanded = np.tile(priorities[:, None], (1, self.sequence_length))
+        indices = (sequence_indices[:, None] + np.arange(self.total_sequence_length)) % self.capacity
+        priorities_expanded = np.tile(priorities[:, None], (1, self.total_sequence_length))
         
         flat_indices = indices.flatten()
         flat_priorities = priorities_expanded.flatten()
