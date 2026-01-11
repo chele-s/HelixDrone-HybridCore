@@ -549,7 +549,7 @@ class CppSequenceReplayBuffer:
         self.sequence_length = sequence_length
         self.burn_in_length = burn_in_length
         
-        if _HAS_CPP_SEQ_BUFFER:
+        if False:
             self._cpp = _cpp_core.SequenceReplayBuffer(capacity, obs_dim, action_dim, sequence_length)
             self._use_cpp = True
         else:
@@ -618,7 +618,7 @@ class CppSequencePrioritizedReplayBuffer:
         self.sequence_length = sequence_length
         self.burn_in_length = burn_in_length
         
-        if _HAS_CPP_SEQ_BUFFER:
+        if False:
             self._cpp = _cpp_core.SequencePrioritizedReplayBuffer(
                 capacity, obs_dim, action_dim, sequence_length, alpha, beta_start, beta_frames, epsilon)
             self._use_cpp = True
