@@ -707,6 +707,8 @@ class SequenceReplayBuffer:
         self.size = 0
         self.current_episode_id = 0
         self._current_ep_step = 0
+        self._env_ep_steps = {}
+        self._env_episode_ids = {}
     
     def push(
         self,
@@ -757,14 +759,30 @@ class SequenceReplayBuffer:
         dones: np.ndarray
     ) -> None:
         batch_size = states.shape[0]
+        
         for i in range(batch_size):
-            self.push(
-                states[i],
-                actions[i],
-                float(rewards[i]) if rewards.ndim > 0 else float(rewards),
-                next_states[i],
-                bool(dones[i]) if dones.ndim > 0 else bool(dones)
-            )
+            if i not in self._env_ep_steps:
+                self._env_ep_steps[i] = 0
+                self._env_episode_ids[i] = self.current_episode_id
+                self.current_episode_id += 1
+            
+            self.observations[self.ptr] = states[i]
+            self.actions[self.ptr] = actions[i]
+            self.rewards[self.ptr] = float(rewards[i]) if rewards.ndim > 0 else float(rewards)
+            self.next_observations[self.ptr] = next_states[i]
+            self.dones[self.ptr] = float(dones[i]) if dones.ndim > 0 else float(dones)
+            self.episode_ids[self.ptr] = self._env_episode_ids[i]
+            self.step_in_episode[self.ptr] = self._env_ep_steps[i]
+            
+            self.ptr = (self.ptr + 1) % self.capacity
+            self.size = min(self.size + 1, self.capacity)
+            self._env_ep_steps[i] += 1
+            
+            is_done = bool(dones[i]) if dones.ndim > 0 else bool(dones)
+            if is_done:
+                self._env_episode_ids[i] = self.current_episode_id
+                self.current_episode_id += 1
+                self._env_ep_steps[i] = 0
 
     def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
         indices = np.random.randint(0, self.size, size=batch_size)
@@ -875,6 +893,8 @@ class SequencePrioritizedReplayBuffer:
         self.size = 0
         self.current_episode_id = 0
         self._current_ep_step = 0
+        self._env_ep_steps = {}
+        self._env_episode_ids = {}
     
     @property
     def beta(self) -> float:
@@ -930,14 +950,31 @@ class SequencePrioritizedReplayBuffer:
         dones: np.ndarray
     ) -> None:
         batch_size = states.shape[0]
+        
         for i in range(batch_size):
-            self.push(
-                states[i],
-                actions[i],
-                float(rewards[i]) if rewards.ndim > 0 else float(rewards),
-                next_states[i],
-                bool(dones[i]) if dones.ndim > 0 else bool(dones)
-            )
+            if i not in self._env_ep_steps:
+                self._env_ep_steps[i] = 0
+                self._env_episode_ids[i] = self.current_episode_id
+                self.current_episode_id += 1
+            
+            self.observations[self.ptr] = states[i]
+            self.actions[self.ptr] = actions[i]
+            self.rewards[self.ptr] = float(rewards[i]) if rewards.ndim > 0 else float(rewards)
+            self.next_observations[self.ptr] = next_states[i]
+            self.dones[self.ptr] = float(dones[i]) if dones.ndim > 0 else float(dones)
+            self.episode_ids[self.ptr] = self._env_episode_ids[i]
+            self.step_in_episode[self.ptr] = self._env_ep_steps[i]
+            self.priorities[self.ptr] = self.max_priority ** self.alpha
+            
+            self.ptr = (self.ptr + 1) % self.capacity
+            self.size = min(self.size + 1, self.capacity)
+            self._env_ep_steps[i] += 1
+            
+            is_done = bool(dones[i]) if dones.ndim > 0 else bool(dones)
+            if is_done:
+                self._env_episode_ids[i] = self.current_episode_id
+                self.current_episode_id += 1
+                self._env_ep_steps[i] = 0
 
     def sample(self, batch_size: int) -> Dict[str, Any]:
         probs = self.priorities[:self.size] ** self.alpha
