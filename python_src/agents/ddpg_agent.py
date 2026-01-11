@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 import numpy as np
 from typing import Optional, Tuple, Dict, Any, Union
 from pathlib import Path
@@ -660,8 +659,7 @@ class TD3LSTMAgent:
         next_obs_seq = batch['next_obs_seq']
         rewards = batch['rewards']
         dones = batch['dones']
-        action_seq = batch['action_seq']
-        masks = batch['masks']
+        actions = batch['actions']
         
         is_per = isinstance(replay_buffer, SequencePrioritizedReplayBuffer)
         if is_per:
@@ -683,7 +681,7 @@ class TD3LSTMAgent:
                 target_q = torch.min(target_q1, target_q2)
                 target_q = rewards + (1 - dones) * self.gamma * target_q
             
-            current_q1, current_q2, _ = self.critic(obs_seq, action_seq, None)
+            current_q1, current_q2, _ = self.critic(obs_seq, actions, None)
             
             td_errors1 = target_q - current_q1
             td_errors2 = target_q - current_q2
