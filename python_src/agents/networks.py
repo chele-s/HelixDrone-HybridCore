@@ -325,11 +325,7 @@ class LSTMActor(nn.Module):
         hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         lengths: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        if lengths is not None:
-            torch.compiler.cudagraph_mark_step_begin()
-        
         batch_size = obs_seq.size(0)
-        seq_len = obs_seq.size(1)
         
         if hidden is None:
             hidden = self.get_initial_hidden(batch_size, obs_seq.device)
@@ -339,20 +335,12 @@ class LSTMActor(nn.Module):
         x = self.input_ln(x)
         x = F.relu(x)
         
+        lstm_out, new_hidden = self.lstm(x, hidden)
+        
         if lengths is not None:
-            lengths_cpu = lengths.cpu()
-            packed = nn.utils.rnn.pack_padded_sequence(
-                x, lengths_cpu, batch_first=True, enforce_sorted=False
-            )
-            packed_out, new_hidden = self.lstm(packed, hidden)
-            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
-                packed_out, batch_first=True, total_length=seq_len
-            )
-            
             idx = (lengths - 1).clamp(min=0).view(-1, 1, 1).expand(-1, 1, self.lstm_hidden)
-            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1).clone()
+            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1)
         else:
-            lstm_out, new_hidden = self.lstm(x, hidden)
             x = lstm_out[:, -1, :]
         
         x = self.post_lstm_ln(x)
@@ -443,11 +431,7 @@ class LSTMCritic(nn.Module):
         hidden: Optional[Tuple[torch.Tensor, torch.Tensor]],
         lengths: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        if lengths is not None:
-            torch.compiler.cudagraph_mark_step_begin()
-        
         batch_size = obs_seq.size(0)
-        seq_len = obs_seq.size(1)
         
         if hidden is None:
             hidden = self.get_initial_hidden(batch_size, obs_seq.device)
@@ -458,20 +442,12 @@ class LSTMCritic(nn.Module):
         x = self.input_ln(x)
         x = F.relu(x)
         
+        lstm_out, new_hidden = self.lstm(x, hidden)
+        
         if lengths is not None:
-            lengths_cpu = lengths.cpu()
-            packed = nn.utils.rnn.pack_padded_sequence(
-                x, lengths_cpu, batch_first=True, enforce_sorted=False
-            )
-            packed_out, new_hidden = self.lstm(packed, hidden)
-            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
-                packed_out, batch_first=True, total_length=seq_len
-            )
-            
             idx = (lengths - 1).clamp(min=0).view(-1, 1, 1).expand(-1, 1, self.lstm_hidden)
-            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1).clone()
+            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1)
         else:
-            lstm_out, new_hidden = self.lstm(x, hidden)
             x = lstm_out[:, -1, :]
         
         x = self.post_lstm_ln(x)
