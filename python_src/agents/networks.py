@@ -319,6 +319,7 @@ class LSTMActor(nn.Module):
         orthogonal_init(self.fc2, gain=np.sqrt(2))
         orthogonal_init(self.fc_out, gain=0.01)
     
+    @torch.compiler.disable
     def forward(
         self,
         obs_seq: torch.Tensor,
@@ -453,6 +454,7 @@ class LSTMCritic(nn.Module):
         x = self.post_lstm_ln(x)
         return x, new_hidden
     
+    @torch.compiler.disable
     def forward(
         self,
         obs_seq: torch.Tensor,
@@ -474,6 +476,7 @@ class LSTMCritic(nn.Module):
         
         return q1, q2, new_hidden
     
+    @torch.compiler.disable
     def q1_forward(
         self,
         obs_seq: torch.Tensor,
