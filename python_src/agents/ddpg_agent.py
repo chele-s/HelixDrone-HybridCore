@@ -570,6 +570,11 @@ class TD3LSTMAgent:
             result = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
             for i in range(self._single_obs_ptr):
                 result[self.sequence_length - self._single_obs_ptr + i] = self._single_obs_buffer[i]
+            
+            # Replicate first valid observation to fill padding
+            pad_len = self.sequence_length - self._single_obs_ptr
+            if pad_len < self.sequence_length:
+                result[:pad_len] = result[pad_len]
             return result
     
     def _update_obs_buffers_batch(self, obs_batch: np.ndarray) -> np.ndarray:
@@ -590,7 +595,9 @@ class TD3LSTMAgent:
             for i in np.where(masks)[0]:
                 valid_count = new_ptrs[i]
                 if valid_count > 0:
-                    sequences[i, :self.sequence_length - valid_count] = 0.0
+                    pad_len = self.sequence_length - valid_count
+                    if pad_len > 0:
+                        sequences[i, :pad_len] = sequences[i, pad_len]
         
         return sequences
     

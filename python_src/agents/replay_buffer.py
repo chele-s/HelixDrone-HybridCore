@@ -825,6 +825,10 @@ class SequenceReplayBuffer:
                 reward_sequences[b, dst_idx] = self.rewards[src_idx]
                 done_sequences[b, dst_idx] = self.dones[src_idx]
                 masks[b, dst_idx] = 1.0
+            
+            if pad_len > 0:
+                obs_sequences[b, :pad_len] = obs_sequences[b, pad_len]
+                next_obs_sequences[b, :pad_len] = next_obs_sequences[b, pad_len]
         
         burn_in_obs = obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
         burn_in_next_obs = next_obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
@@ -1028,6 +1032,10 @@ class SequencePrioritizedReplayBuffer:
                 reward_sequences[b, dst_idx] = self.rewards[src_idx]
                 done_sequences[b, dst_idx] = self.dones[src_idx]
                 masks[b, dst_idx] = 1.0
+            
+            if pad_len > 0:
+                obs_sequences[b, :pad_len] = obs_sequences[b, pad_len]
+                next_obs_sequences[b, :pad_len] = next_obs_sequences[b, pad_len]
         
         burn_in_obs = obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
         burn_in_next_obs = next_obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None

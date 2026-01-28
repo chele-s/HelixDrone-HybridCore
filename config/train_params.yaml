@@ -12,7 +12,7 @@ td3_specific:
   policy_delay: 2
 
 lstm:
-  enabled: false
+  enabled: true
   hidden_dim: 128
   num_layers: 2
   sequence_length: 16
