@@ -347,7 +347,7 @@ class LSTMActor(nn.Module):
             )
             
             idx = (lengths - 1).clamp(min=0).view(-1, 1, 1).expand(-1, 1, self.lstm_hidden)
-            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1)
+            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1).clone()
         else:
             lstm_out, new_hidden = self.lstm(x, hidden)
             x = lstm_out[:, -1, :]
@@ -463,7 +463,7 @@ class LSTMCritic(nn.Module):
             )
             
             idx = (lengths - 1).clamp(min=0).view(-1, 1, 1).expand(-1, 1, self.lstm_hidden)
-            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1)
+            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1).clone()
         else:
             lstm_out, new_hidden = self.lstm(x, hidden)
             x = lstm_out[:, -1, :]
