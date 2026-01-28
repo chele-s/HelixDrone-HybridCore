@@ -955,11 +955,12 @@ PYBIND11_MODULE(drone_core, m) {
         .def("reset", &SwingingPayloadController::reset);
     
     py::class_<helix::SequenceReplayBuffer>(m, "SequenceReplayBuffer")
-        .def(py::init<size_t, size_t, size_t, size_t>(),
+        .def(py::init<size_t, size_t, size_t, size_t, size_t>(),
             py::arg("capacity"),
             py::arg("obs_dim"),
             py::arg("action_dim"),
-            py::arg("sequence_length"))
+            py::arg("sequence_length"),
+            py::arg("burn_in_length") = 0)
         .def("push", [](helix::SequenceReplayBuffer& self,
                         py::array_t<float, py::array::c_style | py::array::forcecast> obs,
                         py::array_t<float, py::array::c_style | py::array::forcecast> action,
@@ -981,6 +982,7 @@ PYBIND11_MODULE(drone_core, m) {
             auto result = self.sample(batchSize);
             py::ssize_t B = static_cast<py::ssize_t>(result.batch_size);
             py::ssize_t L = static_cast<py::ssize_t>(result.seq_len);
+            py::ssize_t BI = static_cast<py::ssize_t>(result.burn_in_len);
             py::ssize_t O = static_cast<py::ssize_t>(result.obs_dim);
             py::ssize_t A = static_cast<py::ssize_t>(result.action_dim);
             
@@ -1021,18 +1023,38 @@ PYBIND11_MODULE(drone_core, m) {
             ret["dones"] = dones;
             ret["masks"] = masks;
             ret["sequence_indices"] = start_indices;
+            
+            if (BI > 0) {
+                py::array_t<float> burn_in_obs({B, BI, O});
+                py::array_t<float> burn_in_next_obs({B, BI, O});
+                py::array_t<float> burn_in_actions({B, BI, A});
+                py::array_t<float> burn_in_masks({B, BI});
+                
+                std::memcpy(burn_in_obs.mutable_data(), result.burn_in_obs.data(), B * BI * O * sizeof(float));
+                std::memcpy(burn_in_next_obs.mutable_data(), result.burn_in_next_obs.data(), B * BI * O * sizeof(float));
+                std::memcpy(burn_in_actions.mutable_data(), result.burn_in_actions.data(), B * BI * A * sizeof(float));
+                std::memcpy(burn_in_masks.mutable_data(), result.burn_in_masks.data(), B * BI * sizeof(float));
+                
+                ret["burn_in_obs"] = burn_in_obs;
+                ret["burn_in_next_obs"] = burn_in_next_obs;
+                ret["burn_in_actions"] = burn_in_actions;
+                ret["burn_in_masks"] = burn_in_masks;
+            }
+            
             return ret;
         })
         .def("size", &helix::SequenceReplayBuffer::size)
+        .def("burn_in_length", &helix::SequenceReplayBuffer::burnInLength)
         .def("is_ready", &helix::SequenceReplayBuffer::isReady)
         .def("__len__", &helix::SequenceReplayBuffer::size);
     
     py::class_<helix::SequencePrioritizedReplayBuffer>(m, "SequencePrioritizedReplayBuffer")
-        .def(py::init<size_t, size_t, size_t, size_t, double, double, size_t, double>(),
+        .def(py::init<size_t, size_t, size_t, size_t, size_t, double, double, size_t, double>(),
             py::arg("capacity"),
             py::arg("obs_dim"),
             py::arg("action_dim"),
             py::arg("sequence_length"),
+            py::arg("burn_in_length") = 0,
             py::arg("alpha") = 0.6,
             py::arg("beta_start") = 0.4,
             py::arg("beta_frames") = 100000,
@@ -1059,6 +1081,7 @@ PYBIND11_MODULE(drone_core, m) {
             auto result = self.sample(batchSize);
             py::ssize_t B = static_cast<py::ssize_t>(result.batch_size);
             py::ssize_t L = static_cast<py::ssize_t>(result.seq_len);
+            py::ssize_t BI = static_cast<py::ssize_t>(result.burn_in_len);
             py::ssize_t O = static_cast<py::ssize_t>(result.obs_dim);
             py::ssize_t A = static_cast<py::ssize_t>(result.action_dim);
             
@@ -1103,6 +1126,24 @@ PYBIND11_MODULE(drone_core, m) {
             ret["masks"] = masks;
             ret["weights"] = weights;
             ret["sequence_indices"] = start_indices;
+            
+            if (BI > 0) {
+                py::array_t<float> burn_in_obs({B, BI, O});
+                py::array_t<float> burn_in_next_obs({B, BI, O});
+                py::array_t<float> burn_in_actions({B, BI, A});
+                py::array_t<float> burn_in_masks({B, BI});
+                
+                std::memcpy(burn_in_obs.mutable_data(), result.burn_in_obs.data(), B * BI * O * sizeof(float));
+                std::memcpy(burn_in_next_obs.mutable_data(), result.burn_in_next_obs.data(), B * BI * O * sizeof(float));
+                std::memcpy(burn_in_actions.mutable_data(), result.burn_in_actions.data(), B * BI * A * sizeof(float));
+                std::memcpy(burn_in_masks.mutable_data(), result.burn_in_masks.data(), B * BI * sizeof(float));
+                
+                ret["burn_in_obs"] = burn_in_obs;
+                ret["burn_in_next_obs"] = burn_in_next_obs;
+                ret["burn_in_actions"] = burn_in_actions;
+                ret["burn_in_masks"] = burn_in_masks;
+            }
+            
             return ret;
         })
         .def("update_priorities", [](helix::SequencePrioritizedReplayBuffer& self,
@@ -1111,6 +1152,7 @@ PYBIND11_MODULE(drone_core, m) {
             self.updatePriorities(indices.data(), td_errors.data(), static_cast<size_t>(indices.size()));
         })
         .def("size", &helix::SequencePrioritizedReplayBuffer::size)
+        .def("burn_in_length", &helix::SequencePrioritizedReplayBuffer::burnInLength)
         .def("is_ready", &helix::SequencePrioritizedReplayBuffer::isReady)
         .def("__len__", &helix::SequencePrioritizedReplayBuffer::size);
 }

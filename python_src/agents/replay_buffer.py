@@ -549,8 +549,8 @@ class CppSequenceReplayBuffer:
         self.sequence_length = sequence_length
         self.burn_in_length = burn_in_length
         
-        if False:
-            self._cpp = _cpp_core.SequenceReplayBuffer(capacity, obs_dim, action_dim, sequence_length)
+        if _HAS_CPP_SEQ_BUFFER:
+            self._cpp = _cpp_core.SequenceReplayBuffer(capacity, obs_dim, action_dim, sequence_length, burn_in_length)
             self._use_cpp = True
         else:
             self._py = SequenceReplayBuffer(capacity, device, obs_dim, action_dim, sequence_length, burn_in_length)
@@ -576,7 +576,7 @@ class CppSequenceReplayBuffer:
     def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
         if self._use_cpp:
             result = self._cpp.sample(batch_size)
-            return {
+            ret = {
                 'obs_seq': torch.as_tensor(result['obs_seq'], dtype=torch.float32, device=self.device),
                 'next_obs_seq': torch.as_tensor(result['next_obs_seq'], dtype=torch.float32, device=self.device),
                 'action_seq': torch.as_tensor(result['action_seq'], dtype=torch.float32, device=self.device),
@@ -585,6 +585,12 @@ class CppSequenceReplayBuffer:
                 'dones': torch.as_tensor(result['dones'], dtype=torch.float32, device=self.device),
                 'masks': torch.as_tensor(result['masks'], dtype=torch.float32, device=self.device)
             }
+            if self.burn_in_length > 0 and 'burn_in_obs' in result:
+                ret['burn_in_obs'] = torch.as_tensor(result['burn_in_obs'], dtype=torch.float32, device=self.device)
+                ret['burn_in_next_obs'] = torch.as_tensor(result['burn_in_next_obs'], dtype=torch.float32, device=self.device)
+                ret['burn_in_actions'] = torch.as_tensor(result['burn_in_actions'], dtype=torch.float32, device=self.device)
+                ret['burn_in_masks'] = torch.as_tensor(result['burn_in_masks'], dtype=torch.float32, device=self.device)
+            return ret
         return self._py.sample(batch_size)
     
     def __len__(self) -> int:
@@ -618,9 +624,9 @@ class CppSequencePrioritizedReplayBuffer:
         self.sequence_length = sequence_length
         self.burn_in_length = burn_in_length
         
-        if False:
+        if _HAS_CPP_SEQ_BUFFER:
             self._cpp = _cpp_core.SequencePrioritizedReplayBuffer(
-                capacity, obs_dim, action_dim, sequence_length, alpha, beta_start, beta_frames, epsilon)
+                capacity, obs_dim, action_dim, sequence_length, burn_in_length, alpha, beta_start, beta_frames, epsilon)
             self._use_cpp = True
         else:
             self._py = SequencePrioritizedReplayBuffer(
@@ -647,7 +653,7 @@ class CppSequencePrioritizedReplayBuffer:
     def sample(self, batch_size: int) -> Dict[str, Any]:
         if self._use_cpp:
             result = self._cpp.sample(batch_size)
-            return {
+            ret = {
                 'obs_seq': torch.as_tensor(result['obs_seq'], dtype=torch.float32, device=self.device),
                 'next_obs_seq': torch.as_tensor(result['next_obs_seq'], dtype=torch.float32, device=self.device),
                 'action_seq': torch.as_tensor(result['action_seq'], dtype=torch.float32, device=self.device),
@@ -658,6 +664,12 @@ class CppSequencePrioritizedReplayBuffer:
                 'weights': torch.as_tensor(result['weights'], dtype=torch.float32, device=self.device),
                 'sequence_indices': result['sequence_indices'].astype(np.int64)
             }
+            if self.burn_in_length > 0 and 'burn_in_obs' in result:
+                ret['burn_in_obs'] = torch.as_tensor(result['burn_in_obs'], dtype=torch.float32, device=self.device)
+                ret['burn_in_next_obs'] = torch.as_tensor(result['burn_in_next_obs'], dtype=torch.float32, device=self.device)
+                ret['burn_in_actions'] = torch.as_tensor(result['burn_in_actions'], dtype=torch.float32, device=self.device)
+                ret['burn_in_masks'] = torch.as_tensor(result['burn_in_masks'], dtype=torch.float32, device=self.device)
+            return ret
         return self._py.sample(batch_size)
     
     def update_priorities(self, sequence_indices: np.ndarray, td_errors: np.ndarray) -> None:

@@ -1,5 +1,5 @@
 agent:
-  type: td3
+  type: td3_lstm
   hidden_dim: 512
   lr_actor: 3.0e-4
   lr_critic: 3.0e-4

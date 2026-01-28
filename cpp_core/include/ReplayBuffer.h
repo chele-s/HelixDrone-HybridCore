@@ -609,17 +609,24 @@ public:
         AlignedVector<float> dones;
         AlignedVector<float> masks;
         AlignedVector<size_t> start_indices;
+        AlignedVector<float> burn_in_obs;
+        AlignedVector<float> burn_in_next_obs;
+        AlignedVector<float> burn_in_actions;
+        AlignedVector<float> burn_in_masks;
         size_t batch_size;
         size_t seq_len;
+        size_t burn_in_len;
         size_t obs_dim;
         size_t action_dim;
     };
     
-    SequenceReplayBuffer(size_t capacity, size_t obs_dim, size_t action_dim, size_t seq_len)
+    SequenceReplayBuffer(size_t capacity, size_t obs_dim, size_t action_dim, size_t seq_len, size_t burn_in_len = 0)
         : capacity_(capacity),
           obs_dim_(obs_dim),
           action_dim_(action_dim),
           seq_len_(seq_len),
+          burn_in_len_(burn_in_len),
+          total_seq_len_(seq_len + burn_in_len),
           ptr_(0),
           size_(0),
           valid_count_(0),
@@ -649,19 +656,35 @@ public:
         SampleResult result;
         result.batch_size = batch_size;
         result.seq_len = seq_len_;
+        result.burn_in_len = burn_in_len_;
         result.obs_dim = obs_dim_;
         result.action_dim = action_dim_;
         
-        size_t total_steps = batch_size * seq_len_;
-        result.obs_seq.resize(total_steps * obs_dim_);
-        result.next_obs_seq.resize(total_steps * obs_dim_);
-        result.action_seq.resize(total_steps * action_dim_);
-        result.rewards.resize(batch_size);
-        result.dones.resize(batch_size);
-        result.masks.resize(total_steps, 1.0f);
+        size_t total_steps = batch_size * total_seq_len_;
+        AlignedVector<float> full_obs(total_steps * obs_dim_);
+        AlignedVector<float> full_next_obs(total_steps * obs_dim_);
+        AlignedVector<float> full_actions(total_steps * action_dim_);
+        AlignedVector<float> full_rewards(total_steps);
+        AlignedVector<float> full_dones(total_steps);
+        AlignedVector<float> full_masks(total_steps, 1.0f);
+        
         result.start_indices.resize(batch_size);
         
-        if (valid_count_ == 0) return result;
+        if (valid_count_ == 0) {
+            result.obs_seq.resize(batch_size * seq_len_ * obs_dim_, 0.0f);
+            result.next_obs_seq.resize(batch_size * seq_len_ * obs_dim_, 0.0f);
+            result.action_seq.resize(batch_size * seq_len_ * action_dim_, 0.0f);
+            result.rewards.resize(batch_size, 0.0f);
+            result.dones.resize(batch_size, 0.0f);
+            result.masks.resize(batch_size * seq_len_, 0.0f);
+            if (burn_in_len_ > 0) {
+                result.burn_in_obs.resize(batch_size * burn_in_len_ * obs_dim_, 0.0f);
+                result.burn_in_next_obs.resize(batch_size * burn_in_len_ * obs_dim_, 0.0f);
+                result.burn_in_actions.resize(batch_size * burn_in_len_ * action_dim_, 0.0f);
+                result.burn_in_masks.resize(batch_size * burn_in_len_, 0.0f);
+            }
+            return result;
+        }
         
         std::uniform_int_distribution<size_t> dist(0, size_ - 1);
         size_t collected = 0;
@@ -683,16 +706,56 @@ public:
             }
         }
         
-        AlignedVector<float> temp_rewards(total_steps);
-        AlignedVector<float> temp_dones(total_steps);
+        data_.gatherSequences(result.start_indices.data(), batch_size, total_seq_len_,
+                              full_obs.data(), full_next_obs.data(),
+                              full_actions.data(), full_rewards.data(), full_dones.data());
         
-        data_.gatherSequences(result.start_indices.data(), batch_size, seq_len_,
-                              result.obs_seq.data(), result.next_obs_seq.data(),
-                              result.action_seq.data(), temp_rewards.data(), temp_dones.data());
+        size_t train_steps = batch_size * seq_len_;
+        result.obs_seq.resize(train_steps * obs_dim_);
+        result.next_obs_seq.resize(train_steps * obs_dim_);
+        result.action_seq.resize(train_steps * action_dim_);
+        result.rewards.resize(batch_size);
+        result.dones.resize(batch_size);
+        result.masks.resize(train_steps, 1.0f);
+        
+        if (burn_in_len_ > 0) {
+            size_t burn_steps = batch_size * burn_in_len_;
+            result.burn_in_obs.resize(burn_steps * obs_dim_);
+            result.burn_in_next_obs.resize(burn_steps * obs_dim_);
+            result.burn_in_actions.resize(burn_steps * action_dim_);
+            result.burn_in_masks.resize(burn_steps, 1.0f);
+        }
         
         for (size_t b = 0; b < batch_size; ++b) {
-            result.rewards[b] = temp_rewards[b * seq_len_ + seq_len_ - 1];
-            result.dones[b] = temp_dones[b * seq_len_ + seq_len_ - 1];
+            if (burn_in_len_ > 0) {
+                for (size_t t = 0; t < burn_in_len_; ++t) {
+                    size_t src_idx = b * total_seq_len_ + t;
+                    size_t dst_idx = b * burn_in_len_ + t;
+                    std::memcpy(result.burn_in_obs.data() + dst_idx * obs_dim_,
+                               full_obs.data() + src_idx * obs_dim_, obs_dim_ * sizeof(float));
+                    std::memcpy(result.burn_in_next_obs.data() + dst_idx * obs_dim_,
+                               full_next_obs.data() + src_idx * obs_dim_, obs_dim_ * sizeof(float));
+                    std::memcpy(result.burn_in_actions.data() + dst_idx * action_dim_,
+                               full_actions.data() + src_idx * action_dim_, action_dim_ * sizeof(float));
+                    result.burn_in_masks[dst_idx] = full_masks[src_idx];
+                }
+            }
+            
+            for (size_t t = 0; t < seq_len_; ++t) {
+                size_t src_idx = b * total_seq_len_ + burn_in_len_ + t;
+                size_t dst_idx = b * seq_len_ + t;
+                std::memcpy(result.obs_seq.data() + dst_idx * obs_dim_,
+                           full_obs.data() + src_idx * obs_dim_, obs_dim_ * sizeof(float));
+                std::memcpy(result.next_obs_seq.data() + dst_idx * obs_dim_,
+                           full_next_obs.data() + src_idx * obs_dim_, obs_dim_ * sizeof(float));
+                std::memcpy(result.action_seq.data() + dst_idx * action_dim_,
+                           full_actions.data() + src_idx * action_dim_, action_dim_ * sizeof(float));
+                result.masks[dst_idx] = full_masks[src_idx];
+            }
+            
+            size_t last_full_idx = b * total_seq_len_ + total_seq_len_ - 1;
+            result.rewards[b] = full_rewards[last_full_idx];
+            result.dones[b] = full_dones[last_full_idx];
         }
         
         return result;
@@ -700,11 +763,12 @@ public:
     
     size_t size() const noexcept { return size_; }
     size_t capacity() const noexcept { return capacity_; }
+    size_t burnInLength() const noexcept { return burn_in_len_; }
     bool isReady(size_t batch_size) const noexcept { return valid_count_ >= batch_size; }
 
 private:
     void updateValidity(size_t ptr) noexcept {
-        for (size_t offset = 0; offset < seq_len_; ++offset) {
+        for (size_t offset = 0; offset < total_seq_len_; ++offset) {
             size_t start = (ptr + capacity_ - offset) % capacity_;
             if (checkBit(start)) {
                 clearBit(start);
@@ -712,8 +776,8 @@ private:
             }
         }
         
-        if (size_ >= seq_len_) {
-            size_t candidate = (ptr + capacity_ - seq_len_ + 1) % capacity_;
+        if (size_ >= total_seq_len_) {
+            size_t candidate = (ptr + capacity_ - total_seq_len_ + 1) % capacity_;
             if (isValidSequence(candidate) && !checkBit(candidate)) {
                 setBit(candidate);
                 ++valid_count_;
@@ -722,9 +786,9 @@ private:
     }
     
     bool isValidSequence(size_t start) const noexcept {
-        size_t end = (start + seq_len_ - 1) % capacity_;
+        size_t end = (start + total_seq_len_ - 1) % capacity_;
         if (data_.episode_ids[start] != data_.episode_ids[end]) return false;
-        for (size_t t = 0; t < seq_len_ - 1; ++t) {
+        for (size_t t = 0; t < total_seq_len_ - 1; ++t) {
             size_t idx = (start + t) % capacity_;
             if (data_.dones[idx] > 0.5f) return false;
         }
@@ -737,7 +801,7 @@ private:
     void setBit(size_t idx) noexcept { valid_mask_[idx / 64] |= (1ULL << (idx % 64)); }
     void clearBit(size_t idx) noexcept { valid_mask_[idx / 64] &= ~(1ULL << (idx % 64)); }
     
-    size_t capacity_, obs_dim_, action_dim_, seq_len_;
+    size_t capacity_, obs_dim_, action_dim_, seq_len_, burn_in_len_, total_seq_len_;
     size_t ptr_, size_, valid_count_;
     int64_t current_episode_id_;
     SequenceBlock data_;
@@ -756,20 +820,27 @@ public:
         AlignedVector<float> masks;
         AlignedVector<float> weights;
         AlignedVector<size_t> start_indices;
+        AlignedVector<float> burn_in_obs;
+        AlignedVector<float> burn_in_next_obs;
+        AlignedVector<float> burn_in_actions;
+        AlignedVector<float> burn_in_masks;
         size_t batch_size;
         size_t seq_len;
+        size_t burn_in_len;
         size_t obs_dim;
         size_t action_dim;
     };
     
     SequencePrioritizedReplayBuffer(size_t capacity, size_t obs_dim, size_t action_dim, 
-                                     size_t seq_len, double alpha = 0.6,
+                                     size_t seq_len, size_t burn_in_len = 0, double alpha = 0.6,
                                      double beta_start = 0.4, size_t beta_frames = 100000,
                                      double epsilon = 1e-6)
         : capacity_(capacity),
           obs_dim_(obs_dim),
           action_dim_(action_dim),
           seq_len_(seq_len),
+          burn_in_len_(burn_in_len),
+          total_seq_len_(seq_len + burn_in_len),
           alpha_(alpha),
           beta_start_(beta_start),
           beta_frames_(beta_frames),
@@ -812,20 +883,36 @@ public:
         SampleResult result;
         result.batch_size = batch_size;
         result.seq_len = seq_len_;
+        result.burn_in_len = burn_in_len_;
         result.obs_dim = obs_dim_;
         result.action_dim = action_dim_;
         
-        size_t total_steps = batch_size * seq_len_;
-        result.obs_seq.resize(total_steps * obs_dim_);
-        result.next_obs_seq.resize(total_steps * obs_dim_);
-        result.action_seq.resize(total_steps * action_dim_);
-        result.rewards.resize(batch_size);
-        result.dones.resize(batch_size);
-        result.masks.resize(total_steps, 1.0f);
-        result.weights.resize(batch_size);
-        result.start_indices.resize(batch_size);
+        size_t total_steps = batch_size * total_seq_len_;
+        AlignedVector<float> full_obs(total_steps * obs_dim_);
+        AlignedVector<float> full_next_obs(total_steps * obs_dim_);
+        AlignedVector<float> full_actions(total_steps * action_dim_);
+        AlignedVector<float> full_rewards(total_steps);
+        AlignedVector<float> full_dones(total_steps);
+        AlignedVector<float> full_masks(total_steps, 1.0f);
         
-        if (valid_count_ == 0) return result;
+        result.start_indices.resize(batch_size);
+        result.weights.resize(batch_size);
+        
+        if (valid_count_ == 0) {
+            result.obs_seq.resize(batch_size * seq_len_ * obs_dim_, 0.0f);
+            result.next_obs_seq.resize(batch_size * seq_len_ * obs_dim_, 0.0f);
+            result.action_seq.resize(batch_size * seq_len_ * action_dim_, 0.0f);
+            result.rewards.resize(batch_size, 0.0f);
+            result.dones.resize(batch_size, 0.0f);
+            result.masks.resize(batch_size * seq_len_, 0.0f);
+            if (burn_in_len_ > 0) {
+                result.burn_in_obs.resize(batch_size * burn_in_len_ * obs_dim_, 0.0f);
+                result.burn_in_next_obs.resize(batch_size * burn_in_len_ * obs_dim_, 0.0f);
+                result.burn_in_actions.resize(batch_size * burn_in_len_ * action_dim_, 0.0f);
+                result.burn_in_masks.resize(batch_size * burn_in_len_, 0.0f);
+            }
+            return result;
+        }
         
         std::uniform_int_distribution<size_t> dist(0, size_ - 1);
         
@@ -872,16 +959,56 @@ public:
             result.weights[i] *= inv_max;
         }
         
-        AlignedVector<float> temp_rewards(total_steps);
-        AlignedVector<float> temp_dones(total_steps);
+        data_.gatherSequences(result.start_indices.data(), batch_size, total_seq_len_,
+                              full_obs.data(), full_next_obs.data(),
+                              full_actions.data(), full_rewards.data(), full_dones.data());
         
-        data_.gatherSequences(result.start_indices.data(), batch_size, seq_len_,
-                              result.obs_seq.data(), result.next_obs_seq.data(),
-                              result.action_seq.data(), temp_rewards.data(), temp_dones.data());
+        size_t train_steps = batch_size * seq_len_;
+        result.obs_seq.resize(train_steps * obs_dim_);
+        result.next_obs_seq.resize(train_steps * obs_dim_);
+        result.action_seq.resize(train_steps * action_dim_);
+        result.rewards.resize(batch_size);
+        result.dones.resize(batch_size);
+        result.masks.resize(train_steps, 1.0f);
+        
+        if (burn_in_len_ > 0) {
+            size_t burn_steps = batch_size * burn_in_len_;
+            result.burn_in_obs.resize(burn_steps * obs_dim_);
+            result.burn_in_next_obs.resize(burn_steps * obs_dim_);
+            result.burn_in_actions.resize(burn_steps * action_dim_);
+            result.burn_in_masks.resize(burn_steps, 1.0f);
+        }
         
         for (size_t b = 0; b < batch_size; ++b) {
-            result.rewards[b] = temp_rewards[b * seq_len_ + seq_len_ - 1];
-            result.dones[b] = temp_dones[b * seq_len_ + seq_len_ - 1];
+            if (burn_in_len_ > 0) {
+                for (size_t t = 0; t < burn_in_len_; ++t) {
+                    size_t src_idx = b * total_seq_len_ + t;
+                    size_t dst_idx = b * burn_in_len_ + t;
+                    std::memcpy(result.burn_in_obs.data() + dst_idx * obs_dim_,
+                               full_obs.data() + src_idx * obs_dim_, obs_dim_ * sizeof(float));
+                    std::memcpy(result.burn_in_next_obs.data() + dst_idx * obs_dim_,
+                               full_next_obs.data() + src_idx * obs_dim_, obs_dim_ * sizeof(float));
+                    std::memcpy(result.burn_in_actions.data() + dst_idx * action_dim_,
+                               full_actions.data() + src_idx * action_dim_, action_dim_ * sizeof(float));
+                    result.burn_in_masks[dst_idx] = full_masks[src_idx];
+                }
+            }
+            
+            for (size_t t = 0; t < seq_len_; ++t) {
+                size_t src_idx = b * total_seq_len_ + burn_in_len_ + t;
+                size_t dst_idx = b * seq_len_ + t;
+                std::memcpy(result.obs_seq.data() + dst_idx * obs_dim_,
+                           full_obs.data() + src_idx * obs_dim_, obs_dim_ * sizeof(float));
+                std::memcpy(result.next_obs_seq.data() + dst_idx * obs_dim_,
+                           full_next_obs.data() + src_idx * obs_dim_, obs_dim_ * sizeof(float));
+                std::memcpy(result.action_seq.data() + dst_idx * action_dim_,
+                           full_actions.data() + src_idx * action_dim_, action_dim_ * sizeof(float));
+                result.masks[dst_idx] = full_masks[src_idx];
+            }
+            
+            size_t last_full_idx = b * total_seq_len_ + total_seq_len_ - 1;
+            result.rewards[b] = full_rewards[last_full_idx];
+            result.dones[b] = full_dones[last_full_idx];
         }
         
         ++frame_;
@@ -891,7 +1018,7 @@ public:
     void updatePriorities(const size_t* indices, const double* td_errors, size_t count) noexcept {
         for (size_t i = 0; i < count; ++i) {
             double priority = std::pow(std::abs(td_errors[i]) + epsilon_, alpha_);
-            for (size_t t = 0; t < seq_len_; ++t) {
+            for (size_t t = 0; t < total_seq_len_; ++t) {
                 priorities_[(indices[i] + t) % capacity_] = priority;
             }
             double current_max = max_priority_.load();
@@ -901,19 +1028,20 @@ public:
     
     size_t size() const noexcept { return size_; }
     size_t capacity() const noexcept { return capacity_; }
+    size_t burnInLength() const noexcept { return burn_in_len_; }
     bool isReady(size_t batch_size) const noexcept { return valid_count_ >= batch_size; }
 
 private:
     void updateValidity(size_t ptr) noexcept {
-        for (size_t offset = 0; offset < seq_len_; ++offset) {
+        for (size_t offset = 0; offset < total_seq_len_; ++offset) {
             size_t start = (ptr + capacity_ - offset) % capacity_;
             if (checkBit(start)) {
                 clearBit(start);
                 --valid_count_;
             }
         }
-        if (size_ >= seq_len_) {
-            size_t candidate = (ptr + capacity_ - seq_len_ + 1) % capacity_;
+        if (size_ >= total_seq_len_) {
+            size_t candidate = (ptr + capacity_ - total_seq_len_ + 1) % capacity_;
             if (isValidSequence(candidate) && !checkBit(candidate)) {
                 setBit(candidate);
                 ++valid_count_;
@@ -922,9 +1050,9 @@ private:
     }
     
     bool isValidSequence(size_t start) const noexcept {
-        size_t end = (start + seq_len_ - 1) % capacity_;
+        size_t end = (start + total_seq_len_ - 1) % capacity_;
         if (data_.episode_ids[start] != data_.episode_ids[end]) return false;
-        for (size_t t = 0; t < seq_len_ - 1; ++t) {
+        for (size_t t = 0; t < total_seq_len_ - 1; ++t) {
             size_t idx = (start + t) % capacity_;
             if (data_.dones[idx] > 0.5f) return false;
         }
@@ -933,10 +1061,10 @@ private:
     
     double computeSeqPriority(size_t start) const noexcept {
         double p = 0.0;
-        for (size_t t = 0; t < seq_len_; ++t) {
+        for (size_t t = 0; t < total_seq_len_; ++t) {
             p += priorities_[(start + t) % capacity_];
         }
-        return p / static_cast<double>(seq_len_);
+        return p / static_cast<double>(total_seq_len_);
     }
     
     double computeMaxSeqPriority() const noexcept {
@@ -949,7 +1077,7 @@ private:
     void setBit(size_t idx) noexcept { valid_mask_[idx / 64] |= (1ULL << (idx % 64)); }
     void clearBit(size_t idx) noexcept { valid_mask_[idx / 64] &= ~(1ULL << (idx % 64)); }
     
-    size_t capacity_, obs_dim_, action_dim_, seq_len_;
+    size_t capacity_, obs_dim_, action_dim_, seq_len_, burn_in_len_, total_seq_len_;
     double alpha_, beta_start_, epsilon_;
     size_t beta_frames_;
     std::atomic<size_t> frame_;

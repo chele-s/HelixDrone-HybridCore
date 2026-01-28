@@ -610,7 +610,7 @@ class TD3LSTMAgent:
                 obs_seq, dtype=torch.float32, device=self.device
             ).unsqueeze(0)
             
-            action, self._actor_hidden = self.actor(obs_tensor, self._actor_hidden)
+            action, _ = self.actor(obs_tensor, None)
             action = action.cpu().numpy()[0]
         
         if add_noise:
@@ -668,20 +668,43 @@ class TD3LSTMAgent:
         else:
             weights = torch.ones(batch_size, 1, device=self.device)
         
+        actor_burn_in_hidden = None
+        actor_burn_in_hidden_next = None
+        critic_burn_in_hidden = None
+        critic_burn_in_hidden_next = None
+        
+        if self.burn_in_length > 0 and 'burn_in_obs' in batch:
+            burn_in_obs = batch['burn_in_obs']
+            burn_in_next_obs = batch['burn_in_next_obs']
+            burn_in_actions = batch['burn_in_actions']
+            dummy_action = burn_in_actions[:, -1, :]
+            
+            with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
+                _, actor_burn_in_hidden = self.actor(burn_in_obs, None)
+                _, actor_burn_in_hidden_next = self.actor_target(burn_in_next_obs, None)
+                
+                _, _, critic_burn_in_hidden = self.critic(burn_in_obs, dummy_action, None)
+                _, _, critic_burn_in_hidden_next = self.critic_target(burn_in_next_obs, dummy_action, None)
+                
+                actor_burn_in_hidden = (actor_burn_in_hidden[0].detach(), actor_burn_in_hidden[1].detach())
+                actor_burn_in_hidden_next = (actor_burn_in_hidden_next[0].detach(), actor_burn_in_hidden_next[1].detach())
+                critic_burn_in_hidden = (critic_burn_in_hidden[0].detach(), critic_burn_in_hidden[1].detach())
+                critic_burn_in_hidden_next = (critic_burn_in_hidden_next[0].detach(), critic_burn_in_hidden_next[1].detach())
+        
         with torch.amp.autocast('cuda', enabled=self.use_amp):
             with torch.no_grad():
-                next_actions, _ = self.actor_target(next_obs_seq, None)
+                next_actions, _ = self.actor_target(next_obs_seq, actor_burn_in_hidden_next)
                 
                 noise = (
                     torch.randn_like(next_actions) * self.policy_noise
                 ).clamp(-self.noise_clip, self.noise_clip)
                 next_actions = (next_actions + noise).clamp(-self.max_action, self.max_action)
                 
-                target_q1, target_q2, _ = self.critic_target(next_obs_seq, next_actions, None)
+                target_q1, target_q2, _ = self.critic_target(next_obs_seq, next_actions, critic_burn_in_hidden_next)
                 target_q = torch.min(target_q1, target_q2)
                 target_q = rewards + (1 - dones) * self.gamma * target_q
             
-            current_q1, current_q2, _ = self.critic(obs_seq, actions, None)
+            current_q1, current_q2, _ = self.critic(obs_seq, actions, critic_burn_in_hidden)
             
             td_errors1 = target_q - current_q1
             td_errors2 = target_q - current_q2
@@ -711,8 +734,8 @@ class TD3LSTMAgent:
         
         if self._train_steps % self.policy_delay == 0:
             with torch.amp.autocast('cuda', enabled=self.use_amp):
-                actor_actions, _ = self.actor(obs_seq, None)
-                actor_q1, _ = self.critic.q1_forward(obs_seq, actor_actions, None)
+                actor_actions, _ = self.actor(obs_seq, actor_burn_in_hidden)
+                actor_q1, _ = self.critic.q1_forward(obs_seq, actor_actions, critic_burn_in_hidden)
                 actor_loss = -actor_q1.mean()
             
             self.actor_optimizer.zero_grad()
