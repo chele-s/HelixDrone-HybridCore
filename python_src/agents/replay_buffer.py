@@ -904,13 +904,16 @@ class SequenceReplayBuffer:
         
         train_lengths = np.maximum(lengths - self.burn_in_length, 1).astype(np.int64)
         
+        batch_indices = np.arange(batch_size)
+        last_valid_idx = train_lengths - 1
+        
         result = {
             'obs_seq': torch.as_tensor(train_obs, dtype=torch.float32, device=self.device),
             'next_obs_seq': torch.as_tensor(train_next_obs, dtype=torch.float32, device=self.device),
             'action_seq': torch.as_tensor(train_actions, dtype=torch.float32, device=self.device),
-            'actions': torch.as_tensor(train_actions[:, -1, :], dtype=torch.float32, device=self.device),
-            'rewards': torch.as_tensor(train_rewards[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
-            'dones': torch.as_tensor(train_dones[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'actions': torch.as_tensor(train_actions[batch_indices, last_valid_idx, :], dtype=torch.float32, device=self.device),
+            'rewards': torch.as_tensor(train_rewards[batch_indices, last_valid_idx], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'dones': torch.as_tensor(train_dones[batch_indices, last_valid_idx], dtype=torch.float32, device=self.device).unsqueeze(-1),
             'masks': torch.as_tensor(train_masks, dtype=torch.float32, device=self.device),
             'lengths': torch.as_tensor(train_lengths, dtype=torch.int64, device=self.device),
             'next_lengths': torch.as_tensor(train_lengths, dtype=torch.int64, device=self.device)
@@ -1115,13 +1118,16 @@ class SequencePrioritizedReplayBuffer:
         
         train_lengths = np.maximum(lengths - self.burn_in_length, 1).astype(np.int64)
         
+        batch_indices = np.arange(batch_size)
+        last_valid_idx = train_lengths - 1
+        
         result = {
             'obs_seq': torch.as_tensor(train_obs, dtype=torch.float32, device=self.device),
             'next_obs_seq': torch.as_tensor(train_next_obs, dtype=torch.float32, device=self.device),
             'action_seq': torch.as_tensor(train_actions, dtype=torch.float32, device=self.device),
-            'actions': torch.as_tensor(train_actions[:, -1, :], dtype=torch.float32, device=self.device),
-            'rewards': torch.as_tensor(train_rewards[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
-            'dones': torch.as_tensor(train_dones[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'actions': torch.as_tensor(train_actions[batch_indices, last_valid_idx, :], dtype=torch.float32, device=self.device),
+            'rewards': torch.as_tensor(train_rewards[batch_indices, last_valid_idx], dtype=torch.float32, device=self.device).unsqueeze(-1),
+            'dones': torch.as_tensor(train_dones[batch_indices, last_valid_idx], dtype=torch.float32, device=self.device).unsqueeze(-1),
             'masks': torch.as_tensor(train_masks, dtype=torch.float32, device=self.device),
             'lengths': torch.as_tensor(train_lengths, dtype=torch.int64, device=self.device),
             'next_lengths': torch.as_tensor(train_lengths, dtype=torch.int64, device=self.device),
