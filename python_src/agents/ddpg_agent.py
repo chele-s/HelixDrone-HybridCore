@@ -551,7 +551,7 @@ class TD3LSTMAgent:
                 self._obs_buffers_full[idx] = False
             self._actor_hidden = None
     
-    def _update_obs_buffer_single(self, obs: np.ndarray) -> np.ndarray:
+    def _update_obs_buffer_single(self, obs: np.ndarray) -> Tuple[np.ndarray, int]:
         if not hasattr(self, '_single_obs_buffer'):
             self._single_obs_buffer = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
             self._single_obs_ptr = 0
@@ -565,19 +565,14 @@ class TD3LSTMAgent:
         
         if self._single_obs_full:
             indices = [(self._single_obs_ptr + i) % self.sequence_length for i in range(self.sequence_length)]
-            return self._single_obs_buffer[indices]
+            return self._single_obs_buffer[indices], self.sequence_length
         else:
             result = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
-            for i in range(self._single_obs_ptr):
-                result[self.sequence_length - self._single_obs_ptr + i] = self._single_obs_buffer[i]
-            
-            # Replicate first valid observation to fill padding
-            pad_len = self.sequence_length - self._single_obs_ptr
-            if pad_len < self.sequence_length:
-                result[:pad_len] = result[pad_len]
-            return result
+            valid_count = self._single_obs_ptr
+            result[:valid_count] = self._single_obs_buffer[:valid_count]
+            return result, valid_count
     
-    def _update_obs_buffers_batch(self, obs_batch: np.ndarray) -> np.ndarray:
+    def _update_obs_buffers_batch(self, obs_batch: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         batch_size = obs_batch.shape[0]
         
         ptrs = self._obs_buffer_ptrs
@@ -587,19 +582,21 @@ class TD3LSTMAgent:
         self._obs_buffers_full |= (new_ptrs == 0)
         self._obs_buffer_ptrs = new_ptrs
         
-        indices = (ptrs[:, None] + 1 + np.arange(self.sequence_length)) % self.sequence_length
-        sequences = self._obs_buffers[np.arange(batch_size)[:, None], indices]
+        sequences = np.zeros((batch_size, self.sequence_length, self.obs_dim), dtype=np.float32)
+        lengths = np.zeros(batch_size, dtype=np.int64)
         
-        masks = ~self._obs_buffers_full
-        if masks.any():
-            for i in np.where(masks)[0]:
+        for i in range(batch_size):
+            if self._obs_buffers_full[i]:
+                start = new_ptrs[i]
+                indices = [(start + t) % self.sequence_length for t in range(self.sequence_length)]
+                sequences[i] = self._obs_buffers[i, indices]
+                lengths[i] = self.sequence_length
+            else:
                 valid_count = new_ptrs[i]
-                if valid_count > 0:
-                    pad_len = self.sequence_length - valid_count
-                    if pad_len > 0:
-                        sequences[i, :pad_len] = sequences[i, pad_len]
+                sequences[i, :valid_count] = self._obs_buffers[i, :valid_count]
+                lengths[i] = max(valid_count, 1)
         
-        return sequences
+        return sequences, lengths
     
     def get_action(
         self,
@@ -610,14 +607,15 @@ class TD3LSTMAgent:
         if reset_hidden:
             self.reset_hidden_states()
         
-        obs_seq = self._update_obs_buffer_single(obs)
+        obs_seq, length = self._update_obs_buffer_single(obs)
         
         with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
             obs_tensor = torch.as_tensor(
                 obs_seq, dtype=torch.float32, device=self.device
             ).unsqueeze(0)
+            lengths_tensor = torch.tensor([length], dtype=torch.int64, device=self.device)
             
-            action, _ = self.actor(obs_tensor, None)
+            action, _ = self.actor(obs_tensor, None, lengths_tensor)
             action = action.cpu().numpy()[0]
         
         if add_noise:
@@ -635,13 +633,14 @@ class TD3LSTMAgent:
         if self._obs_buffers is None or self._obs_buffers.shape[0] != obs_batch.shape[0]:
             self.init_vectorized(obs_batch.shape[0])
         
-        obs_sequences = self._update_obs_buffers_batch(obs_batch)
+        obs_sequences, lengths = self._update_obs_buffers_batch(obs_batch)
         
         with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
             obs_tensor = torch.as_tensor(
                 obs_sequences, dtype=torch.float32, device=self.device
             )
-            actions, _ = self.actor(obs_tensor, None)
+            lengths_tensor = torch.as_tensor(lengths, dtype=torch.int64, device=self.device)
+            actions, _ = self.actor(obs_tensor, None, lengths_tensor)
             actions = actions.cpu().numpy()
         
         if add_noise and noise_scale > 0:
@@ -667,6 +666,8 @@ class TD3LSTMAgent:
         rewards = batch['rewards']
         dones = batch['dones']
         actions = batch['actions']
+        lengths = batch['lengths']
+        next_lengths = batch['next_lengths']
         
         is_per = isinstance(replay_buffer, SequencePrioritizedReplayBuffer)
         if is_per:
@@ -679,19 +680,21 @@ class TD3LSTMAgent:
         actor_burn_in_hidden_next = None
         critic_burn_in_hidden = None
         critic_burn_in_hidden_next = None
+        burn_in_lengths = None
         
         if self.burn_in_length > 0 and 'burn_in_obs' in batch:
             burn_in_obs = batch['burn_in_obs']
             burn_in_next_obs = batch['burn_in_next_obs']
             burn_in_actions = batch['burn_in_actions']
+            burn_in_lengths = batch.get('burn_in_lengths', None)
             dummy_action = burn_in_actions[:, -1, :]
             
             with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
-                _, actor_burn_in_hidden = self.actor(burn_in_obs, None)
-                _, actor_burn_in_hidden_next = self.actor_target(burn_in_next_obs, None)
+                _, actor_burn_in_hidden = self.actor(burn_in_obs, None, burn_in_lengths)
+                _, actor_burn_in_hidden_next = self.actor_target(burn_in_next_obs, None, burn_in_lengths)
                 
-                _, _, critic_burn_in_hidden = self.critic(burn_in_obs, dummy_action, None)
-                _, _, critic_burn_in_hidden_next = self.critic_target(burn_in_next_obs, dummy_action, None)
+                _, _, critic_burn_in_hidden = self.critic(burn_in_obs, dummy_action, None, burn_in_lengths)
+                _, _, critic_burn_in_hidden_next = self.critic_target(burn_in_next_obs, dummy_action, None, burn_in_lengths)
                 
                 actor_burn_in_hidden = (actor_burn_in_hidden[0].detach(), actor_burn_in_hidden[1].detach())
                 actor_burn_in_hidden_next = (actor_burn_in_hidden_next[0].detach(), actor_burn_in_hidden_next[1].detach())
@@ -700,18 +703,18 @@ class TD3LSTMAgent:
         
         with torch.amp.autocast('cuda', enabled=self.use_amp):
             with torch.no_grad():
-                next_actions, _ = self.actor_target(next_obs_seq, actor_burn_in_hidden_next)
+                next_actions, _ = self.actor_target(next_obs_seq, actor_burn_in_hidden_next, next_lengths)
                 
                 noise = (
                     torch.randn_like(next_actions) * self.policy_noise
                 ).clamp(-self.noise_clip, self.noise_clip)
                 next_actions = (next_actions + noise).clamp(-self.max_action, self.max_action)
                 
-                target_q1, target_q2, _ = self.critic_target(next_obs_seq, next_actions, critic_burn_in_hidden_next)
+                target_q1, target_q2, _ = self.critic_target(next_obs_seq, next_actions, critic_burn_in_hidden_next, next_lengths)
                 target_q = torch.min(target_q1, target_q2)
                 target_q = rewards + (1 - dones) * self.gamma * target_q
             
-            current_q1, current_q2, _ = self.critic(obs_seq, actions, critic_burn_in_hidden)
+            current_q1, current_q2, _ = self.critic(obs_seq, actions, critic_burn_in_hidden, lengths)
             
             td_errors1 = target_q - current_q1
             td_errors2 = target_q - current_q2
@@ -741,8 +744,8 @@ class TD3LSTMAgent:
         
         if self._train_steps % self.policy_delay == 0:
             with torch.amp.autocast('cuda', enabled=self.use_amp):
-                actor_actions, _ = self.actor(obs_seq, actor_burn_in_hidden)
-                actor_q1, _ = self.critic.q1_forward(obs_seq, actor_actions, critic_burn_in_hidden)
+                actor_actions, _ = self.actor(obs_seq, actor_burn_in_hidden, lengths)
+                actor_q1, _ = self.critic.q1_forward(obs_seq, actor_actions, critic_burn_in_hidden, lengths)
                 actor_loss = -actor_q1.mean()
             
             self.actor_optimizer.zero_grad()

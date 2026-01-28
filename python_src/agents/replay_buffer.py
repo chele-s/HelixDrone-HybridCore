@@ -805,30 +805,27 @@ class SequenceReplayBuffer:
         reward_sequences = np.zeros((batch_size, self.total_sequence_length), dtype=np.float32)
         done_sequences = np.zeros((batch_size, self.total_sequence_length), dtype=np.float32)
         masks = np.zeros((batch_size, self.total_sequence_length), dtype=np.float32)
+        lengths = np.zeros(batch_size, dtype=np.int64)
         
         for b, end_idx in enumerate(indices):
-            ep_id = self.episode_ids[end_idx]
             step_num = self.step_in_episode[end_idx]
             
             available_steps = step_num + 1
             seq_len_to_copy = min(available_steps, self.total_sequence_length)
-            pad_len = self.total_sequence_length - seq_len_to_copy
             
-            start_idx = (end_idx - seq_len_to_copy + 1) % self.capacity
+            lengths[b] = seq_len_to_copy
+            
+            start_idx = (end_idx - seq_len_to_copy + 1 + self.capacity) % self.capacity
             
             for t in range(seq_len_to_copy):
                 src_idx = (start_idx + t) % self.capacity
-                dst_idx = pad_len + t
+                dst_idx = t
                 obs_sequences[b, dst_idx] = self.observations[src_idx]
                 next_obs_sequences[b, dst_idx] = self.next_observations[src_idx]
                 action_sequences[b, dst_idx] = self.actions[src_idx]
                 reward_sequences[b, dst_idx] = self.rewards[src_idx]
                 done_sequences[b, dst_idx] = self.dones[src_idx]
                 masks[b, dst_idx] = 1.0
-            
-            if pad_len > 0:
-                obs_sequences[b, :pad_len] = obs_sequences[b, pad_len]
-                next_obs_sequences[b, :pad_len] = next_obs_sequences[b, pad_len]
         
         burn_in_obs = obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
         burn_in_next_obs = next_obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
@@ -842,6 +839,8 @@ class SequenceReplayBuffer:
         train_dones = done_sequences[:, self.burn_in_length:]
         train_masks = masks[:, self.burn_in_length:]
         
+        train_lengths = np.maximum(lengths - self.burn_in_length, 1).astype(np.int64)
+        
         result = {
             'obs_seq': torch.as_tensor(train_obs, dtype=torch.float32, device=self.device),
             'next_obs_seq': torch.as_tensor(train_next_obs, dtype=torch.float32, device=self.device),
@@ -849,14 +848,18 @@ class SequenceReplayBuffer:
             'actions': torch.as_tensor(train_actions[:, -1, :], dtype=torch.float32, device=self.device),
             'rewards': torch.as_tensor(train_rewards[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
             'dones': torch.as_tensor(train_dones[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
-            'masks': torch.as_tensor(train_masks, dtype=torch.float32, device=self.device)
+            'masks': torch.as_tensor(train_masks, dtype=torch.float32, device=self.device),
+            'lengths': torch.as_tensor(train_lengths, dtype=torch.int64, device=self.device),
+            'next_lengths': torch.as_tensor(train_lengths, dtype=torch.int64, device=self.device)
         }
         
         if self.burn_in_length > 0:
+            burn_in_lengths = np.minimum(lengths, self.burn_in_length).astype(np.int64)
             result['burn_in_obs'] = torch.as_tensor(burn_in_obs, dtype=torch.float32, device=self.device)
             result['burn_in_next_obs'] = torch.as_tensor(burn_in_next_obs, dtype=torch.float32, device=self.device)
             result['burn_in_actions'] = torch.as_tensor(burn_in_actions, dtype=torch.float32, device=self.device)
             result['burn_in_masks'] = torch.as_tensor(burn_in_masks, dtype=torch.float32, device=self.device)
+            result['burn_in_lengths'] = torch.as_tensor(burn_in_lengths, dtype=torch.int64, device=self.device)
         
         return result
     
@@ -1013,29 +1016,27 @@ class SequencePrioritizedReplayBuffer:
         reward_sequences = np.zeros((batch_size, self.total_sequence_length), dtype=np.float32)
         done_sequences = np.zeros((batch_size, self.total_sequence_length), dtype=np.float32)
         masks = np.zeros((batch_size, self.total_sequence_length), dtype=np.float32)
+        lengths = np.zeros(batch_size, dtype=np.int64)
         
         for b, end_idx in enumerate(indices):
             step_num = self.step_in_episode[end_idx]
             
             available_steps = step_num + 1
             seq_len_to_copy = min(available_steps, self.total_sequence_length)
-            pad_len = self.total_sequence_length - seq_len_to_copy
             
-            start_idx = (end_idx - seq_len_to_copy + 1) % self.capacity
+            lengths[b] = seq_len_to_copy
+            
+            start_idx = (end_idx - seq_len_to_copy + 1 + self.capacity) % self.capacity
             
             for t in range(seq_len_to_copy):
                 src_idx = (start_idx + t) % self.capacity
-                dst_idx = pad_len + t
+                dst_idx = t
                 obs_sequences[b, dst_idx] = self.observations[src_idx]
                 next_obs_sequences[b, dst_idx] = self.next_observations[src_idx]
                 action_sequences[b, dst_idx] = self.actions[src_idx]
                 reward_sequences[b, dst_idx] = self.rewards[src_idx]
                 done_sequences[b, dst_idx] = self.dones[src_idx]
                 masks[b, dst_idx] = 1.0
-            
-            if pad_len > 0:
-                obs_sequences[b, :pad_len] = obs_sequences[b, pad_len]
-                next_obs_sequences[b, :pad_len] = next_obs_sequences[b, pad_len]
         
         burn_in_obs = obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
         burn_in_next_obs = next_obs_sequences[:, :self.burn_in_length, :] if self.burn_in_length > 0 else None
@@ -1049,6 +1050,8 @@ class SequencePrioritizedReplayBuffer:
         train_dones = done_sequences[:, self.burn_in_length:]
         train_masks = masks[:, self.burn_in_length:]
         
+        train_lengths = np.maximum(lengths - self.burn_in_length, 1).astype(np.int64)
+        
         result = {
             'obs_seq': torch.as_tensor(train_obs, dtype=torch.float32, device=self.device),
             'next_obs_seq': torch.as_tensor(train_next_obs, dtype=torch.float32, device=self.device),
@@ -1057,15 +1060,19 @@ class SequencePrioritizedReplayBuffer:
             'rewards': torch.as_tensor(train_rewards[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
             'dones': torch.as_tensor(train_dones[:, -1], dtype=torch.float32, device=self.device).unsqueeze(-1),
             'masks': torch.as_tensor(train_masks, dtype=torch.float32, device=self.device),
+            'lengths': torch.as_tensor(train_lengths, dtype=torch.int64, device=self.device),
+            'next_lengths': torch.as_tensor(train_lengths, dtype=torch.int64, device=self.device),
             'weights': torch.as_tensor(weights, dtype=torch.float32, device=self.device).unsqueeze(-1),
             'sequence_indices': indices
         }
         
         if self.burn_in_length > 0:
+            burn_in_lengths = np.minimum(lengths, self.burn_in_length).astype(np.int64)
             result['burn_in_obs'] = torch.as_tensor(burn_in_obs, dtype=torch.float32, device=self.device)
             result['burn_in_next_obs'] = torch.as_tensor(burn_in_next_obs, dtype=torch.float32, device=self.device)
             result['burn_in_actions'] = torch.as_tensor(burn_in_actions, dtype=torch.float32, device=self.device)
             result['burn_in_masks'] = torch.as_tensor(burn_in_masks, dtype=torch.float32, device=self.device)
+            result['burn_in_lengths'] = torch.as_tensor(burn_in_lengths, dtype=torch.int64, device=self.device)
         
         return result
     

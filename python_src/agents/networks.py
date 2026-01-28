@@ -322,9 +322,11 @@ class LSTMActor(nn.Module):
     def forward(
         self,
         obs_seq: torch.Tensor,
-        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        lengths: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         batch_size = obs_seq.size(0)
+        seq_len = obs_seq.size(1)
         
         if hidden is None:
             hidden = self.get_initial_hidden(batch_size, obs_seq.device)
@@ -334,9 +336,22 @@ class LSTMActor(nn.Module):
         x = self.input_ln(x)
         x = F.relu(x)
         
-        lstm_out, new_hidden = self.lstm(x, hidden)
+        if lengths is not None:
+            lengths_cpu = lengths.cpu()
+            packed = nn.utils.rnn.pack_padded_sequence(
+                x, lengths_cpu, batch_first=True, enforce_sorted=False
+            )
+            packed_out, new_hidden = self.lstm(packed, hidden)
+            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
+                packed_out, batch_first=True, total_length=seq_len
+            )
+            
+            idx = (lengths - 1).clamp(min=0).view(-1, 1, 1).expand(-1, 1, self.lstm_hidden)
+            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1)
+        else:
+            lstm_out, new_hidden = self.lstm(x, hidden)
+            x = lstm_out[:, -1, :]
         
-        x = lstm_out[:, -1, :]
         x = self.post_lstm_ln(x)
         
         x = F.relu(self.ln1(self.fc1(x)))
@@ -419,13 +434,14 @@ class LSTMCritic(nn.Module):
         orthogonal_init(self.q1_out, gain=1.0)
         orthogonal_init(self.q2_out, gain=1.0)
     
-    def forward(
+    def _process_lstm(
         self,
         obs_seq: torch.Tensor,
-        action: torch.Tensor,
-        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]],
+        lengths: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         batch_size = obs_seq.size(0)
+        seq_len = obs_seq.size(1)
         
         if hidden is None:
             hidden = self.get_initial_hidden(batch_size, obs_seq.device)
@@ -435,9 +451,34 @@ class LSTMCritic(nn.Module):
         x = self.input_proj(obs_seq)
         x = self.input_ln(x)
         x = F.relu(x)
-        lstm_out, new_hidden = self.lstm(x, hidden)
-        x = lstm_out[:, -1, :]
+        
+        if lengths is not None:
+            lengths_cpu = lengths.cpu()
+            packed = nn.utils.rnn.pack_padded_sequence(
+                x, lengths_cpu, batch_first=True, enforce_sorted=False
+            )
+            packed_out, new_hidden = self.lstm(packed, hidden)
+            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(
+                packed_out, batch_first=True, total_length=seq_len
+            )
+            
+            idx = (lengths - 1).clamp(min=0).view(-1, 1, 1).expand(-1, 1, self.lstm_hidden)
+            x = torch.gather(lstm_out, dim=1, index=idx).squeeze(1)
+        else:
+            lstm_out, new_hidden = self.lstm(x, hidden)
+            x = lstm_out[:, -1, :]
+        
         x = self.post_lstm_ln(x)
+        return x, new_hidden
+    
+    def forward(
+        self,
+        obs_seq: torch.Tensor,
+        action: torch.Tensor,
+        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        lengths: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        x, new_hidden = self._process_lstm(obs_seq, hidden, lengths)
         
         sa = torch.cat([x, action], dim=-1)
         
@@ -455,21 +496,11 @@ class LSTMCritic(nn.Module):
         self,
         obs_seq: torch.Tensor,
         action: torch.Tensor,
-        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        lengths: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        batch_size = obs_seq.size(0)
+        x, new_hidden = self._process_lstm(obs_seq, hidden, lengths)
         
-        if hidden is None:
-            hidden = self.get_initial_hidden(batch_size, obs_seq.device)
-        
-        self.lstm.flatten_parameters()
-        
-        x = self.input_proj(obs_seq)
-        x = self.input_ln(x)
-        x = F.relu(x)
-        lstm_out, new_hidden = self.lstm(x, hidden)
-        x = lstm_out[:, -1, :]
-        x = self.post_lstm_ln(x)
         x = torch.cat([x, action], dim=-1)
         x = F.relu(self.q1_ln1(self.q1_fc1(x)))
         x = F.relu(self.q1_ln2(self.q1_fc2(x)))
