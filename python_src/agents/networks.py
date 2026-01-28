@@ -325,6 +325,9 @@ class LSTMActor(nn.Module):
         hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         lengths: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        if lengths is not None:
+            torch.compiler.cudagraph_mark_step_begin()
+        
         batch_size = obs_seq.size(0)
         seq_len = obs_seq.size(1)
         
@@ -440,6 +443,9 @@ class LSTMCritic(nn.Module):
         hidden: Optional[Tuple[torch.Tensor, torch.Tensor]],
         lengths: Optional[torch.Tensor]
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        if lengths is not None:
+            torch.compiler.cudagraph_mark_step_begin()
+        
         batch_size = obs_seq.size(0)
         seq_len = obs_seq.size(1)
         
