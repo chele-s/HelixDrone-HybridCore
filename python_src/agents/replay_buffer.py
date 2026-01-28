@@ -533,6 +533,25 @@ class CppPrioritizedReplayBuffer:
         return self._use_cpp
 
 
+def _convert_left_to_right_padding(
+    seq: torch.Tensor,
+    masks: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    batch_size, seq_len = masks.shape[0], masks.shape[1]
+    lengths = masks.sum(dim=1).clamp(min=1).long()
+    
+    result = torch.zeros_like(seq)
+    for b in range(batch_size):
+        length = int(lengths[b].item())
+        pad_len = seq_len - length
+        if len(seq.shape) == 3:
+            result[b, :length] = seq[b, pad_len:]
+        else:
+            result[b, :length] = seq[b, pad_len:]
+    
+    return result, lengths
+
+
 class CppSequenceReplayBuffer:
     def __init__(
         self,
@@ -576,20 +595,42 @@ class CppSequenceReplayBuffer:
     def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
         if self._use_cpp:
             result = self._cpp.sample(batch_size)
+            masks = torch.as_tensor(result['masks'], dtype=torch.float32, device=self.device)
+            
+            obs_seq_left = torch.as_tensor(result['obs_seq'], dtype=torch.float32, device=self.device)
+            next_obs_seq_left = torch.as_tensor(result['next_obs_seq'], dtype=torch.float32, device=self.device)
+            action_seq_left = torch.as_tensor(result['action_seq'], dtype=torch.float32, device=self.device)
+            
+            obs_seq, lengths = _convert_left_to_right_padding(obs_seq_left, masks)
+            next_obs_seq, _ = _convert_left_to_right_padding(next_obs_seq_left, masks)
+            action_seq, _ = _convert_left_to_right_padding(action_seq_left, masks)
+            
             ret = {
-                'obs_seq': torch.as_tensor(result['obs_seq'], dtype=torch.float32, device=self.device),
-                'next_obs_seq': torch.as_tensor(result['next_obs_seq'], dtype=torch.float32, device=self.device),
-                'action_seq': torch.as_tensor(result['action_seq'], dtype=torch.float32, device=self.device),
+                'obs_seq': obs_seq,
+                'next_obs_seq': next_obs_seq,
+                'action_seq': action_seq,
                 'actions': torch.as_tensor(result['actions'], dtype=torch.float32, device=self.device),
                 'rewards': torch.as_tensor(result['rewards'], dtype=torch.float32, device=self.device),
                 'dones': torch.as_tensor(result['dones'], dtype=torch.float32, device=self.device),
-                'masks': torch.as_tensor(result['masks'], dtype=torch.float32, device=self.device)
+                'masks': masks,
+                'lengths': lengths,
+                'next_lengths': lengths
             }
             if self.burn_in_length > 0 and 'burn_in_obs' in result:
-                ret['burn_in_obs'] = torch.as_tensor(result['burn_in_obs'], dtype=torch.float32, device=self.device)
-                ret['burn_in_next_obs'] = torch.as_tensor(result['burn_in_next_obs'], dtype=torch.float32, device=self.device)
-                ret['burn_in_actions'] = torch.as_tensor(result['burn_in_actions'], dtype=torch.float32, device=self.device)
-                ret['burn_in_masks'] = torch.as_tensor(result['burn_in_masks'], dtype=torch.float32, device=self.device)
+                burn_in_masks = torch.as_tensor(result['burn_in_masks'], dtype=torch.float32, device=self.device)
+                burn_in_obs_left = torch.as_tensor(result['burn_in_obs'], dtype=torch.float32, device=self.device)
+                burn_in_next_obs_left = torch.as_tensor(result['burn_in_next_obs'], dtype=torch.float32, device=self.device)
+                burn_in_actions_left = torch.as_tensor(result['burn_in_actions'], dtype=torch.float32, device=self.device)
+                
+                burn_in_obs, burn_in_lengths = _convert_left_to_right_padding(burn_in_obs_left, burn_in_masks)
+                burn_in_next_obs, _ = _convert_left_to_right_padding(burn_in_next_obs_left, burn_in_masks)
+                burn_in_actions, _ = _convert_left_to_right_padding(burn_in_actions_left, burn_in_masks)
+                
+                ret['burn_in_obs'] = burn_in_obs
+                ret['burn_in_next_obs'] = burn_in_next_obs
+                ret['burn_in_actions'] = burn_in_actions
+                ret['burn_in_masks'] = burn_in_masks
+                ret['burn_in_lengths'] = burn_in_lengths
             return ret
         return self._py.sample(batch_size)
     
@@ -653,22 +694,44 @@ class CppSequencePrioritizedReplayBuffer:
     def sample(self, batch_size: int) -> Dict[str, Any]:
         if self._use_cpp:
             result = self._cpp.sample(batch_size)
+            masks = torch.as_tensor(result['masks'], dtype=torch.float32, device=self.device)
+            
+            obs_seq_left = torch.as_tensor(result['obs_seq'], dtype=torch.float32, device=self.device)
+            next_obs_seq_left = torch.as_tensor(result['next_obs_seq'], dtype=torch.float32, device=self.device)
+            action_seq_left = torch.as_tensor(result['action_seq'], dtype=torch.float32, device=self.device)
+            
+            obs_seq, lengths = _convert_left_to_right_padding(obs_seq_left, masks)
+            next_obs_seq, _ = _convert_left_to_right_padding(next_obs_seq_left, masks)
+            action_seq, _ = _convert_left_to_right_padding(action_seq_left, masks)
+            
             ret = {
-                'obs_seq': torch.as_tensor(result['obs_seq'], dtype=torch.float32, device=self.device),
-                'next_obs_seq': torch.as_tensor(result['next_obs_seq'], dtype=torch.float32, device=self.device),
-                'action_seq': torch.as_tensor(result['action_seq'], dtype=torch.float32, device=self.device),
+                'obs_seq': obs_seq,
+                'next_obs_seq': next_obs_seq,
+                'action_seq': action_seq,
                 'actions': torch.as_tensor(result['actions'], dtype=torch.float32, device=self.device),
                 'rewards': torch.as_tensor(result['rewards'], dtype=torch.float32, device=self.device),
                 'dones': torch.as_tensor(result['dones'], dtype=torch.float32, device=self.device),
-                'masks': torch.as_tensor(result['masks'], dtype=torch.float32, device=self.device),
+                'masks': masks,
+                'lengths': lengths,
+                'next_lengths': lengths,
                 'weights': torch.as_tensor(result['weights'], dtype=torch.float32, device=self.device),
                 'sequence_indices': result['sequence_indices'].astype(np.int64)
             }
             if self.burn_in_length > 0 and 'burn_in_obs' in result:
-                ret['burn_in_obs'] = torch.as_tensor(result['burn_in_obs'], dtype=torch.float32, device=self.device)
-                ret['burn_in_next_obs'] = torch.as_tensor(result['burn_in_next_obs'], dtype=torch.float32, device=self.device)
-                ret['burn_in_actions'] = torch.as_tensor(result['burn_in_actions'], dtype=torch.float32, device=self.device)
-                ret['burn_in_masks'] = torch.as_tensor(result['burn_in_masks'], dtype=torch.float32, device=self.device)
+                burn_in_masks = torch.as_tensor(result['burn_in_masks'], dtype=torch.float32, device=self.device)
+                burn_in_obs_left = torch.as_tensor(result['burn_in_obs'], dtype=torch.float32, device=self.device)
+                burn_in_next_obs_left = torch.as_tensor(result['burn_in_next_obs'], dtype=torch.float32, device=self.device)
+                burn_in_actions_left = torch.as_tensor(result['burn_in_actions'], dtype=torch.float32, device=self.device)
+                
+                burn_in_obs, burn_in_lengths = _convert_left_to_right_padding(burn_in_obs_left, burn_in_masks)
+                burn_in_next_obs, _ = _convert_left_to_right_padding(burn_in_next_obs_left, burn_in_masks)
+                burn_in_actions, _ = _convert_left_to_right_padding(burn_in_actions_left, burn_in_masks)
+                
+                ret['burn_in_obs'] = burn_in_obs
+                ret['burn_in_next_obs'] = burn_in_next_obs
+                ret['burn_in_actions'] = burn_in_actions
+                ret['burn_in_masks'] = burn_in_masks
+                ret['burn_in_lengths'] = burn_in_lengths
             return ret
         return self._py.sample(batch_size)
     
