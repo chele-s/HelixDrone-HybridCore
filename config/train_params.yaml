@@ -21,7 +21,7 @@ lstm:
   dropout: 0.0
 
 exploration:
-  noise: 0.25
+  noise: 0.1
   noise_decay: 0.99998
   noise_min: 0.05
 
@@ -61,7 +61,7 @@ environment:
   min_rpm: 2000.0
   hover_rpm: 2750.0
   max_rpm: 35000.0
-  rpm_range: 2000.0
+  rpm_range: 15000.0
   mass: 0.6
 
 observation:
@@ -85,9 +85,9 @@ rewards:
   hover_bonus: 1.5
 
 termination:
-  crash_height: 0.05
+  crash_height: 0.0
   crash_distance: 10.0
-  crash_angle: 1.5
+  crash_angle: 2.0
   success_distance: 0.1
   success_velocity: 0.2
   success_hold_steps: 50
