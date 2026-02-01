@@ -59,7 +59,7 @@ environment:
   use_sub_stepping: false
   use_sota_actuator: true
   min_rpm: 2000.0
-  hover_rpm: 2750.0
+  hover_rpm: 5200.0
   max_rpm: 35000.0
   rpm_range: 15000.0
   mass: 0.6
