@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: helix-drone
 Version: 1.0.0
 Summary: High-Performance Quadrotor Physics Engine with LSTM-TD3 Agent
@@ -15,7 +15,25 @@ Classifier: Programming Language :: C++
 Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.20
+Requires-Dist: torch>=2.0
+Requires-Dist: pybind11>=2.10
+Requires-Dist: PyYAML>=6.0
 Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: black; extra == "dev"
+Requires-Dist: isort; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Dynamic: author
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: keywords
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 # HelixDrone-HybridCore
 

@@ -24,3 +24,6 @@ python_src/utils/__init__.py
 python_src/utils/csv_logger.py
 python_src/utils/helix_math.py
 python_src/utils/visualization.py
+tests/test_agent.py
+tests/test_flight.py
+tests/test_replay_buffer.py

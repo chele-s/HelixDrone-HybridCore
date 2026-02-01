@@ -200,8 +200,7 @@ void Quadrotor::updateMotorDynamics(const MotorCommand& command, double dt) noex
     } else {
         for (int i = 0; i < 4; ++i) {
             double targetRPM = std::clamp(command.rpm[i], 0.0, config_.motor.maxRpm);
-            double alpha = dt / (0.02 + dt);
-            motorState_.rpm[i] += alpha * (targetRPM - motorState_.rpm[i]);
+            motorState_.rpm[i] = targetRPM;
             motorState_.current[i] = 0;
             state_.motorRPM[i] = motorState_.rpm[i];
         }

@@ -125,7 +125,7 @@ class QuadrotorEnv(gym.Env):
         self._cfg.motor_config = drone_core.MotorConfiguration.X
         self._cfg.enable_ground_effect = True
         self._cfg.enable_wind_disturbance = self.config.wind_enabled
-        self._cfg.enable_motor_dynamics = self.config.motor_dynamics
+        self._cfg.enable_motor_dynamics = False if self.config.use_sota_actuator else self.config.motor_dynamics
         self._cfg.enable_battery_dynamics = False
         self._cfg.enable_blade_flapping = True
         self._cfg.enable_advanced_aero = True
