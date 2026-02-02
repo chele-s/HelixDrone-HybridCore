@@ -378,47 +378,37 @@ class QuadrotorEnv(gym.Env):
         dist = np.linalg.norm(error_vec)
         speed = np.linalg.norm(vel)
         
-        r_distance = -dist * 1.0
+        r_distance = -dist * 0.8
         
-        sigma_near = 0.3
-        sigma_far = 1.5
-        blend = np.clip(dist / 2.0, 0.0, 1.0)
-        sigma_adaptive = sigma_near * (1 - blend) + sigma_far * blend
-        r_proximity = 3.0 * np.exp(-(dist ** 2) / sigma_adaptive)
+        sigma = 0.5
+        r_proximity = 2.5 * np.exp(-(dist ** 2) / sigma)
         
-        if dist > 0.3:
-            target_dir = error_vec / (dist + 1e-6)
-            approach_component = np.dot(vel, target_dir)
-            desired_speed = np.clip(dist * 2.0, 0.0, 3.0)
-            speed_error = abs(approach_component - desired_speed)
-            r_approach = 2.0 * np.exp(-speed_error * 0.8) - 1.0
+        if dist > 0.25:
+            target_dir = error_vec / dist
+            approach_speed = np.dot(vel, target_dir)
+            r_velocity = np.clip(approach_speed, -3.0, 3.0) * 1.5
         else:
-            r_approach = -speed * 3.0 * np.exp(-(dist ** 2) / 0.1)
+            r_velocity = -speed * 4.0
         
         tilt_magnitude = np.sqrt(roll ** 2 + pitch ** 2)
-        r_orientation = 2.5 * np.exp(-tilt_magnitude * 5.0)
+        r_orientation = 2.0 * np.exp(-tilt_magnitude * 6.0)
         
         omega_magnitude = np.linalg.norm(ang_vel)
-        r_angular_damping = -0.3 * (1.0 - np.exp(-omega_magnitude * 0.5))
-        
-        action_magnitude = np.linalg.norm(action)
-        r_energy = -0.1 * action_magnitude ** 2
+        r_stability = -omega_magnitude * 0.15
         
         action_delta = action - self._prev_action
-        jerk_magnitude = np.linalg.norm(action_delta) / self.config.dt
-        r_jerk = -0.02 * np.tanh(jerk_magnitude * 0.1)
+        r_smoothness = -np.dot(action_delta, action_delta) * 0.4
         
         height_error = abs(pos[2] - self.target[2])
-        r_altitude = 0.8 * np.exp(-height_error * 4.0)
+        r_altitude = 0.5 * np.exp(-height_error * 3.0)
         
         reward = (
             r_distance +
             r_proximity +
-            r_approach +
+            r_velocity +
             r_orientation +
-            r_angular_damping +
-            r_energy +
-            r_jerk +
+            r_stability +
+            r_smoothness +
             r_altitude
         )
         
@@ -443,7 +433,7 @@ class QuadrotorEnv(gym.Env):
         )
 
         if crashed:
-            reward = -20.0
+            reward = -100.0
             terminated = True
         
         if dist < self.config.success_distance and speed < self.config.success_velocity:
@@ -451,8 +441,6 @@ class QuadrotorEnv(gym.Env):
             reward += 3.0
         else:
             self._success_counter = max(0, self._success_counter - 1)
-        
-        reward = np.clip(reward, -20.0, 15.0)
         
         return float(reward), terminated
     
