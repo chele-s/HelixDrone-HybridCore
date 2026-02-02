@@ -61,7 +61,7 @@ environment:
   min_rpm: 2000.0
   hover_rpm: 2600.0
   max_rpm: 35000.0
-  rpm_range: 15000.0
+  rpm_range: 3600.0
   mass: 0.6
 
 observation:

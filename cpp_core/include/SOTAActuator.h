@@ -36,7 +36,7 @@ struct SOTAActuatorConfig {
         , maxRpm(35000.0)
         , minRpm(2000.0)
         , hoverRpm(2600.0)
-        , rpmRange(15000.0)
+        , rpmRange(3600.0)
         , maxSlewRate(1000000.0)
         , processNoiseStd(0.0)
         , activeBrakingGain(1.2)

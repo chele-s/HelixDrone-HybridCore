@@ -27,7 +27,7 @@ class EnvConfig:
     max_rpm: float = 35000.0
     min_rpm: float = 2000.0
     hover_rpm: float = 2600.0
-    rpm_range: float = 15000.0
+    rpm_range: float = 3600.0
     mass: float = 0.6
     
     position_scale: float = 5.0

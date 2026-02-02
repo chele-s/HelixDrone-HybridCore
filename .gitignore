@@ -101,3 +101,5 @@ python_src/helix_drone.egg-info/PKG-INFO
 python_src/helix_drone.egg-info/PKG-INFO
 python_src/helix_drone.egg-info/SOURCES.txt
 python_src/helix_drone.egg-info/SOURCES.txt
+debug_crash.py
+.gitignore
