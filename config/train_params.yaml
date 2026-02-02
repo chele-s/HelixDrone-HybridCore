@@ -4,7 +4,7 @@ agent:
   lr_actor: 3.0e-4
   lr_critic: 3.0e-4
   gamma: 0.99
-  tau: 0.005
+  tau: 0.001
 
 td3_specific:
   policy_noise: 0.15
