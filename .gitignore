@@ -103,3 +103,5 @@ python_src/helix_drone.egg-info/SOURCES.txt
 python_src/helix_drone.egg-info/SOURCES.txt
 debug_crash.py
 .gitignore
+crash_diagnostic_output.txt
+lstm_debug_output.txt

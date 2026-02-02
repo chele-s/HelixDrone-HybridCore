@@ -404,13 +404,13 @@ class Trainer:
                 noise_scale = self.exploration.noise
                 if self.is_vectorized:
                     if self.use_lstm:
-                        obs_base_batch = obs[:, :self.base_obs_dim]
+                        obs_base_batch = obs_raw[:, :self.base_obs_dim]
                         action = self.agent.get_actions_batch(obs_base_batch, add_noise=True, noise_scale=noise_scale)
                     else:
                         action = self.agent.get_actions_batch(obs, add_noise=True, noise_scale=noise_scale)
                 else:
                     if self.use_lstm:
-                        obs_base = self.env._get_base_obs()
+                        obs_base = obs_raw[:self.base_obs_dim]
                         action = self.agent.get_action(obs_base, add_noise=True)
                     else:
                         action = self._get_action_with_noise(obs, noise_scale)
@@ -420,7 +420,7 @@ class Trainer:
             
             if self.is_vectorized:
                 if self.use_lstm:
-                    obs_base_batch = obs[:, :self.base_obs_dim]
+                    obs_base_batch = obs_raw[:, :self.base_obs_dim]
                     next_obs_base_batch = next_obs_raw[:, :self.base_obs_dim]
                     self.buffer.push_batch(
                         states=obs_base_batch,
@@ -461,8 +461,8 @@ class Trainer:
                 done = terminated or truncated
                 
                 if self.use_lstm:
-                    obs_base = self.env._get_base_obs() if hasattr(self.env, '_get_base_obs') else obs[:self.base_obs_dim]
-                    next_obs_base = self.env._get_base_obs() if hasattr(self.env, '_get_base_obs') else next_obs_raw[:self.base_obs_dim]
+                    obs_base = obs_raw[:self.base_obs_dim]
+                    next_obs_base = next_obs_raw[:self.base_obs_dim]
                     self.buffer.push(obs_base, action, reward, next_obs_base, terminated)
                 else:
                     self.buffer.push(obs, action, reward, next_obs, terminated)
@@ -487,6 +487,7 @@ class Trainer:
                     self.agent.reset_noise()
                     continue
             
+            obs_raw = next_obs_raw
             obs = next_obs
             
             if self.timesteps >= self.config.learning_starts:
@@ -539,7 +540,7 @@ class Trainer:
             
             while not done:
                 if self.use_lstm:
-                    obs_base = self.eval_env._get_base_obs()
+                    obs_base = obs_raw[:self.base_obs_dim]
                     action = self.agent.get_action(obs_base, add_noise=False)
                 else:
                     action = self.agent.get_action(obs, add_noise=False)
