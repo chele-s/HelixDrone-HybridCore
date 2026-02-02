@@ -433,7 +433,7 @@ class QuadrotorEnv(gym.Env):
         )
 
         if crashed:
-            reward = -100.0
+            reward = -20.0
             terminated = True
         
         if dist < self.config.success_distance and speed < self.config.success_velocity:
@@ -441,6 +441,8 @@ class QuadrotorEnv(gym.Env):
             reward += 3.0
         else:
             self._success_counter = max(0, self._success_counter - 1)
+        
+        reward = np.clip(reward, -20.0, 15.0)
         
         return float(reward), terminated
     
