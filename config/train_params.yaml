@@ -4,7 +4,7 @@ agent:
   lr_actor: 3.0e-4
   lr_critic: 3.0e-4
   gamma: 0.99
-  tau: 0.001
+  tau: 0.005
 
 td3_specific:
   policy_noise: 0.15
@@ -22,21 +22,21 @@ lstm:
 
 exploration:
   noise: 0.1
-  noise_decay: 0.999995
-  noise_min: 0.08
+  noise_decay: 0.99998
+  noise_min: 0.05
 
 replay_buffer:
   size: 1000000
   use_per: true
-  per_alpha: 0.4
+  per_alpha: 0.7
   per_beta_start: 0.5
 
 training:
   total_timesteps: 5000000
   batch_size: 256
   learning_starts: 25000
-  train_freq: 1
-  gradient_steps: 1
+  train_freq: 4
+  gradient_steps: 8
 
 evaluation:
   freq: 10000
