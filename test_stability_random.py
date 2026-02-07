@@ -7,7 +7,6 @@ def test_stability():
     print("Initializing environment for Stability Test...")
     config = drone_env.EnvConfig()
     config.use_sota_actuator = True
-    # Ensure config matches the fixed values
     config.hover_rpm = 2600.0
     config.rpm_range = 3600.0
     config.mass = 0.6
@@ -15,7 +14,7 @@ def test_stability():
     env = drone_env.QuadrotorEnv(config=config)
     
     num_episodes = 5
-    max_steps = 200 # Giving it a chance to fly
+    max_steps = 200
     
     print(f"\n--- RUNNING STABILITY TEST ({num_episodes} Episodes) ---")
     print(f"Config: Hover={config.hover_rpm}, Range={config.rpm_range}, Mass={config.mass}")
