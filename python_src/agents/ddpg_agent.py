@@ -639,7 +639,7 @@ class TD3LSTMAgent:
         if self._obs_buffers is None or self._obs_buffers.shape[0] != batch_size:
             self.init_vectorized(batch_size)
         
-        if self._actor_hidden is None:
+        if self._actor_hidden is None or self._actor_hidden[0].size(1) != batch_size:
             self._actor_hidden = self.actor.get_initial_hidden(batch_size, self.device)
         
         obs_sequences, lengths = self._update_obs_buffers_batch(obs_batch)
