@@ -665,7 +665,8 @@ class TD3LSTMAgent:
     def update(
         self,
         replay_buffer: Union[SequenceReplayBuffer, SequencePrioritizedReplayBuffer],
-        batch_size: int = 256
+        batch_size: int = 256,
+        critic_only: bool = False
     ) -> Dict[str, float]:
         if not replay_buffer.is_ready(batch_size):
             return {}
@@ -725,6 +726,7 @@ class TD3LSTMAgent:
                 
                 target_q1, target_q2, _ = self.critic_target(next_obs_seq, next_actions, critic_burn_in_hidden_next, next_lengths)
                 target_q = torch.min(target_q1, target_q2)
+                target_q = target_q.clamp(-200.0, 200.0)
                 target_q = rewards + (1 - dones) * self.gamma * target_q
             
             current_q1, current_q2, _ = self.critic(obs_seq, actions, critic_burn_in_hidden, lengths)
@@ -755,10 +757,11 @@ class TD3LSTMAgent:
             'q_value': current_q1.mean().item()
         }
         
-        if self._train_steps % self.policy_delay == 0:
+        if not critic_only and self._train_steps % self.policy_delay == 0:
             with torch.amp.autocast('cuda', enabled=self.use_amp):
                 actor_actions, _ = self.actor(obs_seq, actor_burn_in_hidden, lengths)
                 actor_q1, _ = self.critic.q1_forward(obs_seq, actor_actions, critic_burn_in_hidden, lengths)
+                actor_q1 = actor_q1.clamp(-200.0, 200.0)
                 actor_loss = -actor_q1.mean()
             
             self.actor_optimizer.zero_grad()

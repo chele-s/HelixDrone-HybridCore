@@ -497,7 +497,11 @@ class Trainer:
             if self.timesteps >= self.config.learning_starts:
                 if self.timesteps % self.config.train_freq == 0:
                     for _ in range(self.config.gradient_steps):
-                        metrics = self.agent.update(self.buffer, self.config.batch_size)
+                        critic_warmup = (self.timesteps - self.config.learning_starts) < 5000
+                        metrics = self.agent.update(
+                            self.buffer, self.config.batch_size,
+                            critic_only=critic_warmup
+                        )
                         if metrics:
                             history['actor_loss'].append(metrics.get('actor_loss', 0))
                             history['critic_loss'].append(metrics.get('critic_loss', 0))

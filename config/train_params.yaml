@@ -1,8 +1,8 @@
 agent:
   type: td3_lstm
   hidden_dim: 512
-  lr_actor: 3.0e-4
-  lr_critic: 3.0e-4
+  lr_actor: 1.0e-4
+  lr_critic: 1.0e-4
   gamma: 0.99
   tau: 0.001
 
@@ -21,9 +21,9 @@ lstm:
   dropout: 0.0
 
 exploration:
-  noise: 0.1
+  noise: 0.3
   noise_decay: 0.99995
-  noise_min: 0.02
+  noise_min: 0.05
 
 replay_buffer:
   size: 1000000
