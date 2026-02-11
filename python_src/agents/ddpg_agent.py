@@ -606,7 +606,8 @@ class TD3LSTMAgent:
         self,
         obs: np.ndarray,
         add_noise: bool = True,
-        reset_hidden: bool = False
+        reset_hidden: bool = False,
+        noise_scale: Optional[float] = None
     ) -> np.ndarray:
         if reset_hidden or self._actor_hidden is None:
             self._actor_hidden = self.actor.get_initial_hidden(1, self.device)
@@ -624,8 +625,10 @@ class TD3LSTMAgent:
             action = action.cpu().numpy()[0]
         
         if add_noise:
-            noise = self.exploration_noise.sample()
-            action = action + noise
+            if noise_scale is not None:
+                action = action + np.random.randn(self.action_dim).astype(np.float32) * noise_scale
+            else:
+                action = action + self.exploration_noise.sample()
         
         return np.clip(action, -self.max_action, self.max_action)
     

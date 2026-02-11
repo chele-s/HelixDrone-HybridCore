@@ -56,10 +56,10 @@ environment:
   wind_enabled: true
   motor_dynamics: true
   physics_sub_steps: 8
-  use_sub_stepping: false
+  use_sub_stepping: true
   use_sota_actuator: true
   min_rpm: 2000.0
-  hover_rpm: 2600.0
+  hover_rpm: 2625.0
   max_rpm: 35000.0
   rpm_range: 3600.0
   mass: 0.6
@@ -85,9 +85,9 @@ rewards:
   success: 100.0
 
 termination:
-  crash_height: 0.0
+  crash_height: 0.03
   crash_distance: 10.0
-  crash_angle: 2.0
+  crash_angle: 1.4
   success_distance: 0.1
   success_velocity: 0.2
   success_hold_steps: 50

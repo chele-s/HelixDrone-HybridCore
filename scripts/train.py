@@ -134,8 +134,8 @@ class AdaptiveExplorationNoise:
         
         crash_rate = np.mean(self.recent_crashes) if self.recent_crashes else 0.0
         if crash_rate > 0.5 and self.steps > 1000:
-            reduction = 1.0 - (crash_rate - 0.5) * 0.5
-            self.current_noise *= max(0.5, reduction)
+            boost = 1.0 + (crash_rate - 0.5) * self.crash_penalty_factor
+            self.current_noise = min(self.start_noise, self.current_noise * boost)
         
         return self.current_noise
     
@@ -411,7 +411,7 @@ class Trainer:
                 else:
                     if self.use_lstm:
                         obs_base = obs_raw[:self.base_obs_dim]
-                        action = self.agent.get_action(obs_base, add_noise=True)
+                        action = self.agent.get_action(obs_base, add_noise=True, noise_scale=noise_scale)
                     else:
                         action = self._get_action_with_noise(obs, noise_scale)
             
