@@ -342,7 +342,9 @@ public:
         const Vec3& angularVelocity,
         const double* motorRPM,
         const RotorConfig& rotor,
-        double dt
+        double dt,
+        double armLength,
+        double airDensity
     ) noexcept;
 };
 
@@ -352,7 +354,8 @@ public:
         const double* motorCurrent,
         const double* motorRPM,
         double dt,
-        const FuelConfig& fuel
+        const FuelConfig& fuel,
+        double voltage
     ) noexcept;
     
     static void updateMassState(
@@ -454,7 +457,8 @@ public:
         const RotorConfig& rotor,
         double armLength,
         double dragCoeff,
-        MotorConfiguration config
+        MotorConfiguration config,
+        double airDensity
     ) noexcept;
     
     static Vec3 computeAerodynamicDrag(

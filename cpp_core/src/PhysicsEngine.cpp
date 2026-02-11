@@ -156,10 +156,8 @@ double NonlinearMotorModel::computeNonlinearResponse(double input, double gamma)
     if (input >= 1) return 1;
     
     double x = input;
-    double sign = 1.0;
     if (gamma < 1.0) {
         x = 1.0 - input;
-        sign = -1.0;
     }
     
     double base = std::pow(std::abs(x), gamma);
@@ -534,13 +532,14 @@ Vec3 PhysicsEngine::computeTorques(
     const RotorConfig& rotor,
     double armLength,
     double dragCoeff,
-    MotorConfiguration config
+    MotorConfiguration config,
+    double airDensity
 ) noexcept {
     double forces[4], moments[4];
     
     for (int i = 0; i < 4; ++i) {
-        forces[i] = BladeElementTheory::computeThrust(motorRPM[i], 1.225, rotor);
-        moments[i] = BladeElementTheory::computeTorque(motorRPM[i], 1.225, rotor);
+        forces[i] = BladeElementTheory::computeThrust(motorRPM[i], airDensity, rotor);
+        moments[i] = BladeElementTheory::computeTorque(motorRPM[i], airDensity, rotor);
     }
     
     double rollTorque, pitchTorque;
@@ -574,7 +573,7 @@ Vec3 PhysicsEngine::computeAerodynamicDrag(
     double omegaNorm = angularVelocity.norm();
     Vec3 rotationalDrag = angularVelocity * (-0.001 * omegaNorm);
     
-    return linearDrag;
+    return linearDrag + rotationalDrag;
 }
 
 Mat3 PhysicsEngine::computeInertiaFromMass(double mass, double armLength) noexcept {
@@ -690,7 +689,9 @@ void BladeFlappingModel::updateFlappingState(
     const Vec3& angularVelocity,
     const double* motorRPM,
     const RotorConfig& rotor,
-    double dt
+    double dt,
+    double armLength,
+    double airDensity
 ) noexcept {
     if (!rotor.flapping.enabled) return;
     
@@ -724,7 +725,7 @@ void BladeFlappingModel::updateFlappingState(
     }
     
     state.flappingMoment = computeFlappingMoment(
-        state, velocityBody, motorRPM, rotor, 0.25, 1.225
+        state, velocityBody, motorRPM, rotor, armLength, airDensity
     );
 }
 
@@ -732,7 +733,8 @@ double VariableMassModel::computeFuelConsumption(
     const double* motorCurrent,
     const double* motorRPM,
     double dt,
-    const FuelConfig& fuel
+    const FuelConfig& fuel,
+    double voltage
 ) noexcept {
     if (fuel.propulsionType == PropulsionType::ELECTRIC || !fuel.variableMassEnabled) {
         return 0;
@@ -740,7 +742,7 @@ double VariableMassModel::computeFuelConsumption(
     
     double totalPower = 0;
     for (int i = 0; i < 4; ++i) {
-        double powerW = motorCurrent[i] * 15.0;
+        double powerW = motorCurrent[i] * voltage;
         totalPower += powerW;
     }
     

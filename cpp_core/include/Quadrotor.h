@@ -155,6 +155,7 @@ private:
     
     double simulationTime_;
     double totalFuelConsumed_;
+    double cumulativeCharge_;
     int lastSubStepCount_;
     Vec3 lastForce_;
     Vec3 lastTorque_;
@@ -175,13 +176,13 @@ private:
     void updateMotorDynamics(const MotorCommand& command, double dt) noexcept;
     void updateBladeFlapping(double dt) noexcept;
     void updateMassDynamics(double dt) noexcept;
-    Vec3 computeTotalThrust() const noexcept;
+    Vec3 computeTotalThrust(double altitude) const noexcept;
     Vec3 computeTotalTorque() const noexcept;
-    Vec3 computeAerodynamicForces(const Vec3& velocityBody) const noexcept;
+    Vec3 computeAerodynamicForces(const Vec3& velocityBody, const Quaternion& orientation, const Vec3& angularVelocity) const noexcept;
     Vec3 computeGyroscopicTorque() const noexcept;
     
     void enforceGroundConstraint() noexcept;
     void updateIMU() noexcept;
     void updateWind(double dt) noexcept;
-    void updateBattery() noexcept;
+    void updateBattery(double dt) noexcept;
 };

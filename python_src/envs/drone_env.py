@@ -34,20 +34,19 @@ class EnvConfig:
     velocity_scale: float = 5.0
     angular_velocity_scale: float = 10.0
     
-    reward_position: float = -0.5
-    reward_velocity: float = -0.025
-    reward_angular: float = -0.01
-    reward_action: float = -0.0005
-    reward_action_rate: float = -0.1
-    reward_action_accel: float = -0.05
-    reward_action_jerk: float = -0.05
-    reward_alive: float = 1.0
-    reward_crash: float = -10.0
-    reward_success: float = 50.0
-    
-    reward_height_bonus: float = 0.5
-    reward_stability_bonus: float = 0.25
-    reward_hover_bonus: float = 2.5
+    reward_proximity_scale: float = 3.0
+    reward_proximity_sigma: float = 0.5
+    reward_velocity_approach: float = 1.2
+    reward_velocity_brake: float = 3.0
+    reward_orientation_scale: float = 2.5
+    reward_stability_scale: float = 0.3
+    reward_smoothness_scale: float = 0.5
+    reward_altitude_scale: float = 0.8
+    reward_hover_scale: float = 1.0
+    reward_hover_max_bonus: float = 4.0
+    reward_low_height_penalty: float = 10.0
+    reward_crash: float = -100.0
+    reward_success: float = 100.0
     
     crash_height: float = 0.03
     crash_distance: float = 10.0
@@ -366,6 +365,7 @@ class QuadrotorEnv(gym.Env):
     
     def _compute_reward(self, action: np.ndarray) -> Tuple[float, bool]:
         s = self._drone.get_state()
+        cfg = self.config
         
         pos = np.array([s.position.x, s.position.y, s.position.z])
         vel = np.array([s.velocity.x, s.velocity.y, s.velocity.z])
@@ -378,32 +378,33 @@ class QuadrotorEnv(gym.Env):
         dist = np.linalg.norm(error_vec)
         speed = np.linalg.norm(vel)
         
-        r_distance = -dist * 0.8
+        r_proximity = cfg.reward_proximity_scale * np.exp(-(dist ** 2) / cfg.reward_proximity_sigma)
         
-        sigma = 0.5
-        r_proximity = 2.5 * np.exp(-(dist ** 2) / sigma)
+        brake_blend = 1.0 / (1.0 + np.exp(20.0 * (dist - 0.25)))
         
-        if dist > 0.25:
+        if dist > 1e-6:
             target_dir = error_vec / dist
             approach_speed = np.dot(vel, target_dir)
-            r_velocity = np.clip(approach_speed, -3.0, 3.0) * 1.5
+            r_approach = np.clip(approach_speed, -3.0, 3.0) * cfg.reward_velocity_approach
         else:
-            r_velocity = -speed * 4.0
+            r_approach = 0.0
+        
+        r_brake = -speed * cfg.reward_velocity_brake
+        r_velocity = brake_blend * r_brake + (1.0 - brake_blend) * r_approach
         
         tilt_magnitude = np.sqrt(roll ** 2 + pitch ** 2)
-        r_orientation = 2.0 * np.exp(-tilt_magnitude * 6.0)
+        r_orientation = cfg.reward_orientation_scale * np.exp(-tilt_magnitude * 6.0)
         
         omega_magnitude = np.linalg.norm(ang_vel)
-        r_stability = -omega_magnitude * 0.15
+        r_stability = -omega_magnitude * cfg.reward_stability_scale
         
         action_delta = action - self._prev_action
-        r_smoothness = -np.dot(action_delta, action_delta) * 0.4
+        r_smoothness = -np.dot(action_delta, action_delta) * cfg.reward_smoothness_scale
         
         height_error = abs(pos[2] - self.target[2])
-        r_altitude = 0.5 * np.exp(-height_error * 3.0)
+        r_altitude = cfg.reward_altitude_scale * np.exp(-height_error * 3.0)
         
         reward = (
-            r_distance +
             r_proximity +
             r_velocity +
             r_orientation +
@@ -415,28 +416,31 @@ class QuadrotorEnv(gym.Env):
         is_hovering = dist < 0.25 and speed < 0.25 and tilt_magnitude < 0.12
         if is_hovering:
             self._hover_duration += 1
-            hover_bonus = min(self._hover_duration / 15.0, 5.0)
+            hover_bonus = min(
+                self._hover_duration / 15.0,
+                cfg.reward_hover_max_bonus
+            ) * cfg.reward_hover_scale
             reward += hover_bonus
         else:
             self._hover_duration = max(0, self._hover_duration - 2)
         
         if pos[2] < 0.2:
-            reward -= (0.2 - pos[2]) * 8.0
+            reward -= (0.2 - pos[2]) * cfg.reward_low_height_penalty
         
         terminated = False
         
         crashed = (
-            pos[2] < self.config.crash_height or
-            dist > self.config.crash_distance or
-            roll > self.config.crash_angle or
-            pitch > self.config.crash_angle
+            pos[2] < cfg.crash_height or
+            dist > cfg.crash_distance or
+            roll > cfg.crash_angle or
+            pitch > cfg.crash_angle
         )
-
+        
         if crashed:
-            reward = -100.0
+            reward = cfg.reward_crash
             terminated = True
         
-        if dist < self.config.success_distance and speed < self.config.success_velocity:
+        if dist < cfg.success_distance and speed < cfg.success_velocity:
             self._success_counter += 1
             reward += 3.0
         else:

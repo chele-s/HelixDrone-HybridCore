@@ -32,7 +32,7 @@ class TrainConfig:
     lr_actor: float = 3e-4
     lr_critic: float = 3e-4
     gamma: float = 0.99
-    tau: float = 0.005
+    tau: float = 0.001
     hidden_dim: int = 256
     
     policy_noise: float = 0.2
@@ -46,8 +46,8 @@ class TrainConfig:
     exploration_noise_min: float = 0.01
     
     use_per: bool = True
-    per_alpha: float = 0.6
-    per_beta_start: float = 0.4
+    per_alpha: float = 0.4
+    per_beta_start: float = 0.5
     
     use_obs_normalization: bool = True
     obs_norm_clip: float = 10.0
@@ -277,7 +277,7 @@ class Trainer:
                 )
     
     def _setup_normalization(self):
-        if self.config.use_obs_normalization:
+        if self.config.use_obs_normalization and not self.use_lstm:
             self.obs_normalizer = RunningMeanStd(shape=(self.state_dim,))
         else:
             self.obs_normalizer = None
@@ -720,19 +720,19 @@ def main():
         rpm_range=float(env_cfg.get('rpm_range', 15000.0)),
         use_sota_actuator=env_cfg.get('use_sota_actuator', False),
         
-        reward_position=float(rew_cfg['position']),
-        reward_velocity=float(rew_cfg['velocity']),
-        reward_angular=float(rew_cfg['angular']),
-        reward_action=float(rew_cfg['action']),
-        reward_action_rate=float(rew_cfg['action_rate']),
-        reward_action_accel=float(rew_cfg.get('action_accel', -0.1)),
-        reward_action_jerk=float(rew_cfg.get('action_jerk', -0.1)),
-        reward_alive=float(rew_cfg.get('alive', 0.0)),
+        reward_proximity_scale=float(rew_cfg['proximity_scale']),
+        reward_proximity_sigma=float(rew_cfg['proximity_sigma']),
+        reward_velocity_approach=float(rew_cfg['velocity_approach']),
+        reward_velocity_brake=float(rew_cfg['velocity_brake']),
+        reward_orientation_scale=float(rew_cfg['orientation_scale']),
+        reward_stability_scale=float(rew_cfg['stability_scale']),
+        reward_smoothness_scale=float(rew_cfg['smoothness_scale']),
+        reward_altitude_scale=float(rew_cfg['altitude_scale']),
+        reward_hover_scale=float(rew_cfg['hover_scale']),
+        reward_hover_max_bonus=float(rew_cfg['hover_max_bonus']),
+        reward_low_height_penalty=float(rew_cfg['low_height_penalty']),
         reward_crash=float(rew_cfg['crash']),
         reward_success=float(rew_cfg['success']),
-        reward_height_bonus=float(rew_cfg.get('height_bonus', 0.5)),
-        reward_stability_bonus=float(rew_cfg.get('stability_bonus', 0.5)),
-        reward_hover_bonus=float(rew_cfg.get('hover_bonus', 1.5)),
         
         crash_height=float(term_cfg['crash_height']),
         crash_distance=float(term_cfg['crash_distance']),

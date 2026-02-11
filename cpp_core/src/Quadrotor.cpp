@@ -6,7 +6,7 @@
 Quadrotor::Quadrotor() noexcept
     : config_(), motorState_(), motorDynamics_(), flappingState_(), massState_(), imuReading_()
     , physics_(IntegrationMethod::RK4), windModel_(), imuSim_()
-    , simulationTime_(0), totalFuelConsumed_(0), lastSubStepCount_(0), lastForce_(), lastTorque_(), windVelocity_()
+    , simulationTime_(0), totalFuelConsumed_(0), cumulativeCharge_(0), lastSubStepCount_(0), lastForce_(), lastTorque_(), windVelocity_()
     , integrating_(false) {
     initialize();
 }
@@ -14,7 +14,7 @@ Quadrotor::Quadrotor() noexcept
 Quadrotor::Quadrotor(const QuadrotorConfig& config) noexcept
     : config_(config), motorState_(), motorDynamics_(), flappingState_(), massState_(), imuReading_()
     , physics_(config.integrationMethod), windModel_(), imuSim_()
-    , simulationTime_(0), totalFuelConsumed_(0), lastSubStepCount_(0), lastForce_(), lastTorque_(), windVelocity_()
+    , simulationTime_(0), totalFuelConsumed_(0), cumulativeCharge_(0), lastSubStepCount_(0), lastForce_(), lastTorque_(), windVelocity_()
     , integrating_(false) {
     initialize();
 }
@@ -43,6 +43,7 @@ void Quadrotor::reset() noexcept {
     massState_.currentMass = config_.mass + config_.fuel.currentFuelMass;
     massState_.currentFuel = config_.fuel.currentFuelMass;
     totalFuelConsumed_ = 0;
+    cumulativeCharge_ = 0;
     lastSubStepCount_ = 0;
     simulationTime_ = 0;
     lastForce_ = Vec3();
@@ -212,7 +213,8 @@ void Quadrotor::updateBladeFlapping(double dt) noexcept {
     
     Vec3 velocityBody = state_.orientation.inverseRotate(state_.velocity);
     BladeFlappingModel::updateFlappingState(
-        flappingState_, velocityBody, state_.angularVelocity, motorState_.rpm, config_.rotor, dt
+        flappingState_, velocityBody, state_.angularVelocity, motorState_.rpm,
+        config_.rotor, dt, config_.armLength, config_.aero.airDensity
     );
 }
 
@@ -220,7 +222,7 @@ void Quadrotor::updateMassDynamics(double dt) noexcept {
     if (!config_.enableVariableMass || !config_.fuel.variableMassEnabled) return;
     
     double fuelConsumed = VariableMassModel::computeFuelConsumption(
-        motorState_.current, motorState_.rpm, dt, config_.fuel
+        motorState_.current, motorState_.rpm, dt, config_.fuel, state_.batteryVoltage
     );
     
     totalFuelConsumed_ += fuelConsumed;
@@ -230,7 +232,7 @@ void Quadrotor::updateMassDynamics(double dt) noexcept {
     updateInertia();
 }
 
-void Quadrotor::updateBattery() noexcept {
+void Quadrotor::updateBattery(double dt) noexcept {
     if (!config_.enableBatteryDynamics) return;
     
     double totalCurrent = 0;
@@ -238,7 +240,11 @@ void Quadrotor::updateBattery() noexcept {
         totalCurrent += motorState_.current[i];
     }
     
-    state_.batteryVoltage = PhysicsEngine::computeBatteryVoltage(config_.battery, totalCurrent, 1.0);
+    cumulativeCharge_ += totalCurrent * dt;
+    double capacityAs = config_.battery.capacity * 3.6;
+    double soc = std::clamp(1.0 - cumulativeCharge_ / capacityAs, 0.0, 1.0);
+    
+    state_.batteryVoltage = PhysicsEngine::computeBatteryVoltage(config_.battery, totalCurrent, soc);
 }
 
 void Quadrotor::updateWind(double dt) noexcept {
@@ -258,7 +264,7 @@ void Quadrotor::updateIMU() noexcept {
     imuReading_ = imuSim_.simulate(state_, acceleration, simulationTime_);
 }
 
-Vec3 Quadrotor::computeTotalThrust() const noexcept {
+Vec3 Quadrotor::computeTotalThrust(double altitude) const noexcept {
     double totalThrust = PhysicsEngine::computeThrust(
         motorState_.rpm, config_.rotor, config_.aero
     );
@@ -266,7 +272,6 @@ Vec3 Quadrotor::computeTotalThrust() const noexcept {
     Vec3 thrustBody(0, 0, totalThrust);
     
     if (config_.enableGroundEffect) {
-        double altitude = state_.position.z - config_.groundZ;
         thrustBody = GroundEffect::computeForce(
             thrustBody, altitude, config_.aero, config_.rotor.radius
         );
@@ -278,7 +283,7 @@ Vec3 Quadrotor::computeTotalThrust() const noexcept {
 Vec3 Quadrotor::computeTotalTorque() const noexcept {
     Vec3 baseTorque = PhysicsEngine::computeTorques(
         motorState_.rpm, config_.rotor, config_.armLength,
-        config_.rotor.dragCoeff, config_.motorConfig
+        config_.rotor.dragCoeff, config_.motorConfig, config_.aero.airDensity
     );
     
     if (config_.enableBladeFlapping) {
@@ -288,18 +293,18 @@ Vec3 Quadrotor::computeTotalTorque() const noexcept {
     return baseTorque;
 }
 
-Vec3 Quadrotor::computeAerodynamicForces(const Vec3& velocityBody) const noexcept {
-    Vec3 relativeVelocity = velocityBody - state_.orientation.inverseRotate(windVelocity_);
+Vec3 Quadrotor::computeAerodynamicForces(const Vec3& velocityBody, const Quaternion& orientation, const Vec3& angularVelocity) const noexcept {
+    Vec3 relativeVelocity = velocityBody - orientation.inverseRotate(windVelocity_);
     
     if (config_.enableAdvancedAero) {
         return PhysicsEngine::computeAdvancedAeroDrag(
-            relativeVelocity, state_.angularVelocity, motorState_.rpm,
+            relativeVelocity, angularVelocity, motorState_.rpm,
             config_.aero, config_.rotor, flappingState_
         );
     }
     
     return PhysicsEngine::computeAerodynamicDrag(
-        relativeVelocity, state_.angularVelocity, config_.aero
+        relativeVelocity, angularVelocity, config_.aero
     );
 }
 
@@ -312,13 +317,14 @@ Vec3 Quadrotor::computeGyroscopicTorque() const noexcept {
 RigidBodyDerivative Quadrotor::computeDerivative(const RigidBodyState& rbState, double t) const {
     RigidBodyDerivative d;
     
-    Vec3 thrustBody = computeTotalThrust();
+    double altitude = rbState.position.z - config_.groundZ;
+    Vec3 thrustBody = computeTotalThrust(altitude);
     Vec3 thrustWorld = rbState.orientation.rotate(thrustBody);
     
     Vec3 gravity(0, 0, -GRAVITY * massState_.currentMass);
     
     Vec3 velocityBody = rbState.orientation.inverseRotate(rbState.velocity);
-    Vec3 dragBody = computeAerodynamicForces(velocityBody);
+    Vec3 dragBody = computeAerodynamicForces(velocityBody, rbState.orientation, rbState.angularVelocity);
     Vec3 dragWorld = rbState.orientation.rotate(dragBody);
     
     Vec3 windForce = windVelocity_ * (config_.aero.airDensity * config_.aero.parasiticDragArea);
@@ -342,7 +348,7 @@ RigidBodyDerivative Quadrotor::computeDerivative(const RigidBodyState& rbState, 
 
 void Quadrotor::stepInternal(const MotorCommand& command, double dt) {
     updateMotorDynamics(command, dt);
-    updateBattery();
+    updateBattery(dt);
     updateWind(dt);
     updateBladeFlapping(dt);
     updateMassDynamics(dt);
@@ -364,7 +370,7 @@ void Quadrotor::stepInternal(const MotorCommand& command, double dt) {
     state_.orientation = nextState.orientation;
     state_.angularVelocity = nextState.angularVelocity;
     
-    lastForce_ = state_.orientation.rotate(computeTotalThrust()) + Vec3(0, 0, -GRAVITY * massState_.currentMass);
+    lastForce_ = state_.orientation.rotate(computeTotalThrust(state_.position.z - config_.groundZ)) + Vec3(0, 0, -GRAVITY * massState_.currentMass);
     lastTorque_ = computeTotalTorque();
     
     simulationTime_ += dt;
@@ -411,7 +417,7 @@ void Quadrotor::stepAdaptive(const MotorCommand& command, double& dt) {
     IntegrationGuard guard(integrating_);
     
     updateMotorDynamics(command, dt);
-    updateBattery();
+    updateBattery(dt);
     updateWind(dt);
     updateBladeFlapping(dt);
     updateMassDynamics(dt);
@@ -438,7 +444,7 @@ void Quadrotor::stepAdaptive(const MotorCommand& command, double& dt) {
     
     dt = result.actualDt;
     
-    lastForce_ = state_.orientation.rotate(computeTotalThrust()) + Vec3(0, 0, -GRAVITY * massState_.currentMass);
+    lastForce_ = state_.orientation.rotate(computeTotalThrust(state_.position.z - config_.groundZ)) + Vec3(0, 0, -GRAVITY * massState_.currentMass);
     lastTorque_ = computeTotalTorque();
     state_.time = simulationTime_;
     
@@ -453,9 +459,10 @@ void Quadrotor::enforceGroundConstraint() noexcept {
         state_.position.z = groundZ;
         
         if (state_.velocity.z < 0) {
+            double impactSpeed = std::abs(state_.velocity.z);
             state_.velocity.z *= -config_.groundRestitution;
             
-            double frictionMag = config_.groundFriction * std::abs(state_.velocity.z);
+            double frictionMag = config_.groundFriction * impactSpeed;
             double horizontalSpeed = std::sqrt(
                 state_.velocity.x * state_.velocity.x + 
                 state_.velocity.y * state_.velocity.y
