@@ -21,9 +21,9 @@ lstm:
   dropout: 0.0
 
 exploration:
-  noise: 0.3
+  noise: 0.15
   noise_decay: 0.99995
-  noise_min: 0.05
+  noise_min: 0.03
 
 replay_buffer:
   size: 1000000

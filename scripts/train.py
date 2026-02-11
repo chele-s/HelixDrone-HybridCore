@@ -408,14 +408,22 @@ class Trainer:
                 noise_scale = self.exploration.noise
                 if self.is_vectorized:
                     if self.use_lstm:
-                        obs_base_batch = obs_raw[:, :self.base_obs_dim]
-                        action = self.agent.get_actions_batch(obs_base_batch, add_noise=True, noise_scale=noise_scale)
+                        obs_norm = self._normalize_obs(obs_raw, update=True)
+                        obs_base_batch = obs_norm[:, :self.base_obs_dim]
+                        action = self.agent.get_actions_batch(obs_base_batch, add_noise=False)
+                        collective = np.random.randn(self.config.num_envs, 1).astype(np.float32) * noise_scale
+                        differential = np.random.randn(self.config.num_envs, self.action_dim).astype(np.float32) * (noise_scale * 0.4)
+                        action = np.clip(action + collective + differential, -1.0, 1.0)
                     else:
                         action = self.agent.get_actions_batch(obs, add_noise=True, noise_scale=noise_scale)
                 else:
                     if self.use_lstm:
-                        obs_base = obs_raw[:self.base_obs_dim]
-                        action = self.agent.get_action(obs_base, add_noise=True, noise_scale=noise_scale)
+                        obs_norm = self._normalize_obs(obs_raw, update=True)
+                        obs_base = obs_norm[:self.base_obs_dim]
+                        action = self.agent.get_action(obs_base, add_noise=False)
+                        collective = np.float32(np.random.randn() * noise_scale)
+                        differential = np.random.randn(self.action_dim).astype(np.float32) * (noise_scale * 0.4)
+                        action = np.clip(action + collective + differential, -1.0, 1.0)
                     else:
                         action = self._get_action_with_noise(obs, noise_scale)
             
@@ -424,8 +432,10 @@ class Trainer:
             
             if self.is_vectorized:
                 if self.use_lstm:
-                    obs_base_batch = obs_raw[:, :self.base_obs_dim]
-                    next_obs_base_batch = next_obs_raw[:, :self.base_obs_dim]
+                    obs_norm_for_buf = self._normalize_obs(obs_raw, update=False)
+                    next_obs_norm_for_buf = self._normalize_obs(next_obs_raw, update=False)
+                    obs_base_batch = obs_norm_for_buf[:, :self.base_obs_dim]
+                    next_obs_base_batch = next_obs_norm_for_buf[:, :self.base_obs_dim]
                     self.buffer.push_batch(
                         states=obs_base_batch,
                         actions=action,
@@ -465,8 +475,10 @@ class Trainer:
                 done = terminated or truncated
                 
                 if self.use_lstm:
-                    obs_base = obs_raw[:self.base_obs_dim]
-                    next_obs_base = next_obs_raw[:self.base_obs_dim]
+                    obs_norm_single = self._normalize_obs(obs_raw, update=False)
+                    next_obs_norm_single = self._normalize_obs(next_obs_raw, update=False)
+                    obs_base = obs_norm_single[:self.base_obs_dim]
+                    next_obs_base = next_obs_norm_single[:self.base_obs_dim]
                     self.buffer.push(obs_base, action, reward, next_obs_base, terminated)
                 else:
                     self.buffer.push(obs, action, reward, next_obs, terminated)
@@ -484,7 +496,6 @@ class Trainer:
                     obs_raw, _ = self.env.reset()
                     obs = self._normalize_obs(obs_raw, update=True)
                     if self.use_lstm:
-                        obs_base = self.env._get_base_obs() if hasattr(self.env, '_get_base_obs') else obs_raw[:self.base_obs_dim]
                         self.agent.reset_hidden_states()
                     episode_reward = 0.0
                     episode_length = 0
