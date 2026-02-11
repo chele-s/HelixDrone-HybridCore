@@ -178,18 +178,23 @@ class QuadrotorEnv(gym.Env):
         if not self.config.domain_randomization:
             return
         
-        mass_factor = self._rng.uniform(0.9, 1.1)
+        dr_scale = self._curriculum_progress if self.config.curriculum_enabled else 1.0
+        
+        mass_range = 0.1 * dr_scale
+        mass_factor = self._rng.uniform(1.0 - mass_range, 1.0 + mass_range)
         self._cfg.mass = self.config.mass * mass_factor
         
-        if self.config.wind_enabled:
-            wind_speed = self._rng.uniform(0, 3)
+        if self.config.wind_enabled and dr_scale > 0.01:
+            wind_speed = self._rng.uniform(0, 3 * dr_scale)
             wind_dir = self._rng.uniform(0, 2 * np.pi)
             wind = drone_core.Vec3(
                 wind_speed * np.cos(wind_dir),
                 wind_speed * np.sin(wind_dir),
-                self._rng.uniform(-0.5, 0.5)
+                self._rng.uniform(-0.5, 0.5) * dr_scale
             )
             self._drone.set_wind(wind)
+        else:
+            self._drone.set_wind(drone_core.Vec3(0, 0, 0))
     
     def reset(
         self, 
@@ -256,7 +261,7 @@ class QuadrotorEnv(gym.Env):
         self._action_history = np.zeros((self._history_length, 4), dtype=np.float32)
         self._rpm_history = np.full((self._history_length, 4), self.config.hover_rpm, dtype=np.float32)
         
-        if self.config.motor_dynamics:
+        if self._cfg.enable_motor_dynamics:
             warmup_rpm = self.config.hover_rpm
             warmup_cmd = drone_core.MotorCommand(warmup_rpm, warmup_rpm, warmup_rpm, warmup_rpm)
             for _ in range(10):
@@ -410,7 +415,8 @@ class QuadrotorEnv(gym.Env):
             r_orientation +
             r_stability +
             r_smoothness +
-            r_altitude
+            r_altitude +
+            1.5
         )
         
         is_hovering = dist < 0.25 and speed < 0.25 and tilt_magnitude < 0.12
@@ -437,7 +443,8 @@ class QuadrotorEnv(gym.Env):
         )
         
         if crashed:
-            reward = cfg.reward_crash
+            length_scale = min(1.0, np.sqrt(self._steps / 50.0))
+            reward = cfg.reward_crash * length_scale
             terminated = True
         
         if dist < cfg.success_distance and speed < cfg.success_velocity:

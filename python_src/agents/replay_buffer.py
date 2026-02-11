@@ -324,9 +324,10 @@ class PrioritizedReplayBuffer:
         tree_indices: np.ndarray, 
         td_errors: np.ndarray
     ) -> None:
-        priorities = (np.abs(td_errors) + self.epsilon) ** self.alpha
-        self.tree.update_batch(tree_indices, priorities)
-        self.max_priority = max(self.max_priority, priorities.max())
+        raw_priorities = np.abs(td_errors) + self.epsilon
+        tree_priorities = raw_priorities ** self.alpha
+        self.tree.update_batch(tree_indices, tree_priorities)
+        self.max_priority = max(self.max_priority, raw_priorities.max())
     
     def __len__(self) -> int:
         return self.size
@@ -1000,7 +1001,7 @@ class SequencePrioritizedReplayBuffer:
         self.dones[self.ptr] = float(done)
         self.episode_ids[self.ptr] = self.current_episode_id
         self.step_in_episode[self.ptr] = self._current_ep_step
-        self.priorities[self.ptr] = self.max_priority ** self.alpha
+        self.priorities[self.ptr] = self.max_priority
         
         self.ptr = (self.ptr + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
@@ -1049,7 +1050,7 @@ class SequencePrioritizedReplayBuffer:
             self.dones[self.ptr] = float(dones[i]) if dones.ndim > 0 else float(dones)
             self.episode_ids[self.ptr] = self._env_episode_ids[i]
             self.step_in_episode[self.ptr] = self._env_ep_steps[i]
-            self.priorities[self.ptr] = self.max_priority ** self.alpha
+            self.priorities[self.ptr] = self.max_priority
             
             self.ptr = (self.ptr + 1) % self.capacity
             self.size = min(self.size + 1, self.capacity)
@@ -1150,7 +1151,7 @@ class SequencePrioritizedReplayBuffer:
         sequence_indices: np.ndarray,
         td_errors: np.ndarray
     ) -> None:
-        priorities = (np.abs(td_errors) + self.epsilon) ** self.alpha
+        priorities = np.abs(td_errors) + self.epsilon
         self.priorities[sequence_indices] = priorities
         self.max_priority = max(self.max_priority, priorities.max())
     

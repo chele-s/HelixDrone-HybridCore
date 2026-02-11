@@ -277,7 +277,7 @@ class Trainer:
                 )
     
     def _setup_normalization(self):
-        if self.config.use_obs_normalization and not self.use_lstm:
+        if self.config.use_obs_normalization:
             self.obs_normalizer = RunningMeanStd(shape=(self.state_dim,))
         else:
             self.obs_normalizer = None
@@ -397,9 +397,13 @@ class Trainer:
         while self.timesteps < self.target_timesteps:
             if self.timesteps < self.config.learning_starts:
                 if self.is_vectorized:
-                    action = np.array([self.env.action_space.sample() for _ in range(self.config.num_envs)])
+                    collective = np.random.randn(self.config.num_envs, 1).astype(np.float32) * 0.15
+                    differential = np.random.randn(self.config.num_envs, self.action_dim).astype(np.float32) * 0.08
+                    action = np.clip(collective + differential, -1.0, 1.0)
                 else:
-                    action = self.env.action_space.sample()
+                    collective = np.float32(np.random.randn() * 0.15)
+                    differential = np.random.randn(self.action_dim).astype(np.float32) * 0.08
+                    action = np.clip(collective + differential, -1.0, 1.0)
             else:
                 noise_scale = self.exploration.noise
                 if self.is_vectorized:
