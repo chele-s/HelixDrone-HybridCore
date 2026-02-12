@@ -1,0 +1,98 @@
+﻿======================================================================
+TEST 1: Zero action (hover)
+======================================================================
+  Step   0 | pos=[+0.0044,-0.0042,+2.0075] | reward=+10.56 | term=False
+  Step   5 | pos=[+0.0044,-0.0040,+1.9969] | reward=+9.98 | term=False
+  Step  10 | pos=[+0.0044,-0.0039,+1.9832] | reward=+9.92 | term=False
+  Step  15 | pos=[+0.0044,-0.0039,+1.9697] | reward=+9.93 | term=False
+  Step  20 | pos=[+0.0044,-0.0039,+1.9570] | reward=+10.01 | term=False
+  Step  25 | pos=[+0.0044,-0.0039,+1.9450] | reward=+10.35 | term=False
+  Step  30 | pos=[+0.0044,-0.0039,+1.9336] | reward=+10.70 | term=False
+  Step  35 | pos=[+0.0044,-0.0038,+1.9230] | reward=+11.04 | term=False
+  Step  40 | pos=[+0.0044,-0.0038,+1.9131] | reward=+11.39 | term=False
+  Step  45 | pos=[+0.0044,-0.0038,+1.9038] | reward=+11.74 | term=False
+
+======================================================================
+TEST 2: Small random collective actions (like random exploration)
+======================================================================
+  Step   0 | action=[+0.086,+0.049,+0.096,+0.255] | pos_z=+1.9916 | reward=+10.51 | term=False
+  Step   5 | action=[-0.054,-0.068,-0.128,-0.048] | pos_z=+1.9810 | reward=+9.89 | term=False
+  Step  10 | action=[-0.473,-0.332,-0.310,-0.454] | pos_z=+1.9674 | reward=+9.37 | term=False
+  Step  15 | action=[+0.166,-0.024,+0.060,+0.229] | pos_z=+1.9515 | reward=+9.19 | term=False
+  Step  20 | action=[+0.154,+0.219,+0.114,+0.026] | pos_z=+1.9326 | reward=+8.70 | term=False
+  Step  25 | action=[-0.016,-0.124,-0.080,-0.007] | pos_z=+1.9134 | reward=+8.41 | term=False
+  Step  30 | action=[+0.032,+0.143,+0.064,+0.212] | pos_z=+1.8968 | reward=+8.40 | term=False
+  Step  35 | action=[-0.133,+0.074,-0.036,-0.141] | pos_z=+1.8810 | reward=+8.15 | term=False
+  Step  40 | action=[-0.025,+0.131,+0.005,-0.016] | pos_z=+1.8635 | reward=+7.62 | term=False
+  Step  45 | action=[-0.131,-0.148,-0.279,-0.038] | pos_z=+1.8448 | reward=+7.30 | term=False
+
+======================================================================
+TEST 3: Constant small differential (simulating biased actor)
+======================================================================
+  Step   0 | pos_z=+1.9930 | quat=[+1.000,-0.000,+0.000,-0.001] | reward=+10.54 | term=False
+  Step   2 | pos_z=+1.9899 | quat=[+1.000,-0.000,+0.000,-0.001] | reward=+10.34 | term=False
+  Step   4 | pos_z=+1.9851 | quat=[+1.000,-0.000,+0.000,-0.001] | reward=+9.98 | term=False
+  Step   6 | pos_z=+1.9797 | quat=[+1.000,-0.000,+0.000,-0.001] | reward=+9.91 | term=False
+  Step   8 | pos_z=+1.9742 | quat=[+1.000,-0.000,+0.000,-0.001] | reward=+9.89 | term=False
+  Step  10 | pos_z=+1.9687 | quat=[+1.000,-0.000,+0.000,-0.000] | reward=+9.89 | term=False
+  Step  12 | pos_z=+1.9634 | quat=[+1.000,-0.000,+0.000,+0.000] | reward=+9.89 | term=False
+  Step  14 | pos_z=+1.9582 | quat=[+1.000,-0.000,+0.000,+0.001] | reward=+9.90 | term=False
+  Step  16 | pos_z=+1.9532 | quat=[+1.000,-0.000,+0.000,+0.002] | reward=+9.98 | term=False
+  Step  18 | pos_z=+1.9484 | quat=[+1.000,-0.000,+0.000,+0.003] | reward=+10.12 | term=False
+  Step  20 | pos_z=+1.9437 | quat=[+1.000,-0.000,+0.000,+0.004] | reward=+10.26 | term=False
+  Step  22 | pos_z=+1.9393 | quat=[+1.000,-0.000,+0.000,+0.006] | reward=+10.41 | term=False
+  Step  24 | pos_z=+1.9350 | quat=[+1.000,-0.000,+0.000,+0.007] | reward=+10.55 | term=False
+  Step  26 | pos_z=+1.9310 | quat=[+1.000,-0.000,+0.000,+0.009] | reward=+10.70 | term=False
+  Step  28 | pos_z=+1.9271 | quat=[+1.000,-0.000,+0.000,+0.011] | reward=+10.84 | term=False
+  Step  30 | pos_z=+1.9234 | quat=[+1.000,-0.000,+0.000,+0.013] | reward=+10.99 | term=False
+  Step  32 | pos_z=+1.9199 | quat=[+1.000,-0.000,+0.000,+0.015] | reward=+11.14 | term=False
+  Step  34 | pos_z=+1.9166 | quat=[+1.000,-0.000,+0.000,+0.018] | reward=+11.28 | term=False
+  Step  36 | pos_z=+1.9134 | quat=[+1.000,-0.000,+0.000,+0.021] | reward=+11.43 | term=False
+  Step  38 | pos_z=+1.9105 | quat=[+1.000,-0.000,+0.000,+0.023] | reward=+11.58 | term=False
+  Step  40 | pos_z=+1.9078 | quat=[+1.000,-0.000,+0.000,+0.026] | reward=+11.73 | term=False
+  Step  42 | pos_z=+1.9052 | quat=[+1.000,-0.000,+0.000,+0.030] | reward=+11.87 | term=False
+  Step  44 | pos_z=+1.9028 | quat=[+0.999,-0.000,+0.000,+0.033] | reward=+12.02 | term=False
+  Step  46 | pos_z=+1.9006 | quat=[+0.999,-0.000,+0.000,+0.037] | reward=+12.17 | term=False
+  Step  48 | pos_z=+1.8986 | quat=[+0.999,-0.000,+0.000,+0.040] | reward=+12.32 | term=False
+
+======================================================================
+TEST 4: Observation values at reset
+======================================================================
+  Full obs dim: (52,)
+  Base obs (first 20):
+    [ 0- 3]: +0.0001, -0.0002, +0.3991, +0.0001
+    [ 4- 7]: -0.0005, +0.0003, +1.0000, +0.0002
+    [ 8-11]: -0.0003, -0.0004, +0.0000, +0.0000
+    [12-15]: +0.0000, -0.0001, +0.0002, +0.0009
+    [16-19]: +0.0000, +0.0000, +0.0000, +0.0000
+
+======================================================================
+TEST 5: What RPMs does action=[0,0,0,0] produce?
+======================================================================
+  hover_rpm=2625.0, rpm_range=3600.0
+python : Traceback (most recent call last):
+En línea: 1 Carácter: 1
++ python scripts/diagnose_crash.py 2>&1 | 
+Out-File -Encoding utf8 scrip ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Trac 
+   eback (most recent call last)::String) [], Re  
+  moteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\elche\OneDrive\Documentos\GitHub\
+HelixDrone-HybridCore\scripts\diagnose_crash.py", 
+line 106, in <module>
+    print(f"  action=[0,0,0,0] \u2192 RPMs = 
+[{rpm[0]:.0f}, {rpm[1]:.0f}, {rpm[2]:.0f}, 
+{rpm[3]:.0f}]")
+  File "C:\Users\elche\AppData\Local\Programs\Pyth
+on\Python311\Lib\encodings\cp1252.py", line 19, 
+in encode
+    return codecs.charmap_encode(input,self.errors
+,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode 
+character '\u2192' in position 19: character maps 
+to <undefined>

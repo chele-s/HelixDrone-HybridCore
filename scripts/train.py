@@ -277,7 +277,7 @@ class Trainer:
                 )
     
     def _setup_normalization(self):
-        if self.config.use_obs_normalization:
+        if self.config.use_obs_normalization and not self.use_lstm:
             self.obs_normalizer = RunningMeanStd(shape=(self.state_dim,))
         else:
             self.obs_normalizer = None
@@ -408,8 +408,7 @@ class Trainer:
                 noise_scale = self.exploration.noise
                 if self.is_vectorized:
                     if self.use_lstm:
-                        obs_norm = self._normalize_obs(obs_raw, update=True)
-                        obs_base_batch = obs_norm[:, :self.base_obs_dim]
+                        obs_base_batch = obs_raw[:, :self.base_obs_dim]
                         action = self.agent.get_actions_batch(obs_base_batch, add_noise=False)
                         collective = np.random.randn(self.config.num_envs, 1).astype(np.float32) * noise_scale
                         differential = np.random.randn(self.config.num_envs, self.action_dim).astype(np.float32) * (noise_scale * 0.4)
@@ -418,8 +417,7 @@ class Trainer:
                         action = self.agent.get_actions_batch(obs, add_noise=True, noise_scale=noise_scale)
                 else:
                     if self.use_lstm:
-                        obs_norm = self._normalize_obs(obs_raw, update=True)
-                        obs_base = obs_norm[:self.base_obs_dim]
+                        obs_base = obs_raw[:self.base_obs_dim]
                         action = self.agent.get_action(obs_base, add_noise=False)
                         collective = np.float32(np.random.randn() * noise_scale)
                         differential = np.random.randn(self.action_dim).astype(np.float32) * (noise_scale * 0.4)
@@ -432,10 +430,8 @@ class Trainer:
             
             if self.is_vectorized:
                 if self.use_lstm:
-                    obs_norm_for_buf = self._normalize_obs(obs_raw, update=False)
-                    next_obs_norm_for_buf = self._normalize_obs(next_obs_raw, update=False)
-                    obs_base_batch = obs_norm_for_buf[:, :self.base_obs_dim]
-                    next_obs_base_batch = next_obs_norm_for_buf[:, :self.base_obs_dim]
+                    obs_base_batch = obs_raw[:, :self.base_obs_dim]
+                    next_obs_base_batch = next_obs_raw[:, :self.base_obs_dim]
                     self.buffer.push_batch(
                         states=obs_base_batch,
                         actions=action,
@@ -475,10 +471,8 @@ class Trainer:
                 done = terminated or truncated
                 
                 if self.use_lstm:
-                    obs_norm_single = self._normalize_obs(obs_raw, update=False)
-                    next_obs_norm_single = self._normalize_obs(next_obs_raw, update=False)
-                    obs_base = obs_norm_single[:self.base_obs_dim]
-                    next_obs_base = next_obs_norm_single[:self.base_obs_dim]
+                    obs_base = obs_raw[:self.base_obs_dim]
+                    next_obs_base = next_obs_raw[:self.base_obs_dim]
                     self.buffer.push(obs_base, action, reward, next_obs_base, terminated)
                 else:
                     self.buffer.push(obs, action, reward, next_obs, terminated)
