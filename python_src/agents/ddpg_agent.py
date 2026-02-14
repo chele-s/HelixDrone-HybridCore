@@ -518,7 +518,6 @@ class TD3LSTMAgent:
         self._obs_buffers = None
         self._obs_buffer_ptrs = None
         self._obs_buffers_full = None
-        self._actor_hidden = None
         
         self._train_steps = 0
         self._actor_loss = 0.0
@@ -531,14 +530,12 @@ class TD3LSTMAgent:
         self._obs_buffers = np.zeros((num_envs, self.sequence_length, self.obs_dim), dtype=np.float32)
         self._obs_buffer_ptrs = np.zeros(num_envs, dtype=np.int32)
         self._obs_buffers_full = np.zeros(num_envs, dtype=bool)
-        self._actor_hidden = None
     
     def reset_hidden_states(self, env_indices: Optional[Union[int, np.ndarray]] = None) -> None:
         if self._num_envs == 1 or env_indices is None:
             self._obs_buffers = np.zeros((self._num_envs, self.sequence_length, self.obs_dim), dtype=np.float32) if self._num_envs > 1 else None
             self._obs_buffer_ptrs = np.zeros(self._num_envs, dtype=np.int32) if self._num_envs > 1 else None
             self._obs_buffers_full = np.zeros(self._num_envs, dtype=bool) if self._num_envs > 1 else None
-            self._actor_hidden = None
             self._single_obs_buffer = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
             self._single_obs_ptr = 0
             self._single_obs_full = False
@@ -549,11 +546,6 @@ class TD3LSTMAgent:
                 self._obs_buffers[idx] = 0.0
                 self._obs_buffer_ptrs[idx] = 0
                 self._obs_buffers_full[idx] = False
-            if self._actor_hidden is not None:
-                h, c = self._actor_hidden
-                for idx in env_indices:
-                    h[:, idx, :] = 0.0
-                    c[:, idx, :] = 0.0
     
     def _update_obs_buffer_single(self, obs: np.ndarray) -> Tuple[np.ndarray, int]:
         if not hasattr(self, '_single_obs_buffer'):
@@ -606,12 +598,8 @@ class TD3LSTMAgent:
         self,
         obs: np.ndarray,
         add_noise: bool = True,
-        reset_hidden: bool = False,
         noise_scale: Optional[float] = None
     ) -> np.ndarray:
-        if reset_hidden or self._actor_hidden is None:
-            self._actor_hidden = self.actor.get_initial_hidden(1, self.device)
-        
         obs_seq, length = self._update_obs_buffer_single(obs)
         
         with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
@@ -620,8 +608,7 @@ class TD3LSTMAgent:
             ).unsqueeze(0)
             lengths_tensor = torch.tensor([length], dtype=torch.int64, device=self.device)
             
-            action, new_hidden = self.actor(obs_tensor, self._actor_hidden, lengths_tensor)
-            self._actor_hidden = (new_hidden[0].detach(), new_hidden[1].detach())
+            action, _ = self.actor(obs_tensor, None, lengths_tensor)
             action = action.cpu().numpy()[0]
         
         if add_noise:
@@ -642,9 +629,6 @@ class TD3LSTMAgent:
         if self._obs_buffers is None or self._obs_buffers.shape[0] != batch_size:
             self.init_vectorized(batch_size)
         
-        if self._actor_hidden is None or self._actor_hidden[0].size(1) != batch_size:
-            self._actor_hidden = self.actor.get_initial_hidden(batch_size, self.device)
-        
         obs_sequences, lengths = self._update_obs_buffers_batch(obs_batch)
         
         with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.use_amp):
@@ -652,8 +636,7 @@ class TD3LSTMAgent:
                 obs_sequences, dtype=torch.float32, device=self.device
             )
             lengths_tensor = torch.as_tensor(lengths, dtype=torch.int64, device=self.device)
-            actions, new_hidden = self.actor(obs_tensor, self._actor_hidden, lengths_tensor)
-            self._actor_hidden = (new_hidden[0].detach(), new_hidden[1].detach())
+            actions, _ = self.actor(obs_tensor, None, lengths_tensor)
             actions = actions.cpu().numpy()
         
         if add_noise and noise_scale > 0:
