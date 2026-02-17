@@ -518,11 +518,15 @@ class TD3LSTMAgent:
         self._obs_buffers = None
         self._obs_buffer_ptrs = None
         self._obs_buffers_full = None
-        
+
+        self._single_obs_buffer = np.zeros((sequence_length, obs_dim), dtype=np.float32)
+        self._single_obs_ptr = 0
+        self._single_obs_full = False
+
         self._train_steps = 0
         self._actor_loss = 0.0
         self._critic_loss = 0.0
-        
+
         self.use_lstm = True
     
     def init_vectorized(self, num_envs: int) -> None:
@@ -532,13 +536,17 @@ class TD3LSTMAgent:
         self._obs_buffers_full = np.zeros(num_envs, dtype=bool)
     
     def reset_hidden_states(self, env_indices: Optional[Union[int, np.ndarray]] = None) -> None:
-        if self._num_envs == 1 or env_indices is None:
-            self._obs_buffers = np.zeros((self._num_envs, self.sequence_length, self.obs_dim), dtype=np.float32) if self._num_envs > 1 else None
-            self._obs_buffer_ptrs = np.zeros(self._num_envs, dtype=np.int32) if self._num_envs > 1 else None
-            self._obs_buffers_full = np.zeros(self._num_envs, dtype=bool) if self._num_envs > 1 else None
-            self._single_obs_buffer = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
-            self._single_obs_ptr = 0
-            self._single_obs_full = False
+        self._single_obs_buffer = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
+        self._single_obs_ptr = 0
+        self._single_obs_full = False
+
+        if self._obs_buffers is None:
+            return
+
+        if env_indices is None:
+            self._obs_buffers[:] = 0.0
+            self._obs_buffer_ptrs[:] = 0
+            self._obs_buffers_full[:] = False
         else:
             if isinstance(env_indices, int):
                 env_indices = [env_indices]
@@ -548,10 +556,6 @@ class TD3LSTMAgent:
                 self._obs_buffers_full[idx] = False
     
     def _update_obs_buffer_single(self, obs: np.ndarray) -> Tuple[np.ndarray, int]:
-        if not hasattr(self, '_single_obs_buffer'):
-            self._single_obs_buffer = np.zeros((self.sequence_length, self.obs_dim), dtype=np.float32)
-            self._single_obs_ptr = 0
-            self._single_obs_full = False
         
         self._single_obs_buffer[self._single_obs_ptr] = obs
         self._single_obs_ptr = (self._single_obs_ptr + 1) % self.sequence_length

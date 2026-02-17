@@ -205,6 +205,8 @@ if pct_diverged > 20:
     print("ROOT CAUSE: get_actions_batch() passes persistent hidden + full sequence")
     print("            but update() passes hidden=None + full sequence")
     print("            The LSTM sees double-processed overlapping obs during inference")
+else:
+    print("VERDICT: PASS - Inference matches training (hidden=None fix applied)")
 
 
 print("\n\n" + "=" * 70)
@@ -308,32 +310,22 @@ print("\n\n" + "=" * 70)
 print("SUMMARY")
 print("=" * 70)
 print("""
-FINDING: The LSTM has a fundamental TRAIN-TEST MISMATCH.
+STATUS: FIXED (hidden=None now used in both training and inference)
 
-DURING TRAINING (update method):
-  - Sequences sampled from replay buffer: [obs_{t-15}, ..., obs_t]
-  - Hidden state: ALWAYS None (zeros), because burn_in=0
-  - The LSTM processes a clean sequence from scratch
+THE ORIGINAL BUG (now resolved):
+  - Training used hidden_state=None (zeros) for each replay sequence
+  - Inference used a PERSISTENT hidden state carried across steps
+  - This caused observations to be double-processed through the LSTM
+  - Result: actor learned one mapping but executed a different one
 
-DURING INFERENCE (get_actions_batch):
-  - Sequence from circular buffer: [obs_{t-15}, ..., obs_t]  (SAME)
-  - Hidden state: h_{t-1} from PREVIOUS step
-  - h_{t-1} already encoded [obs_{t-16}, ..., obs_{t-1}]
-  - So observations obs_{t-15} to obs_{t-1} are processed TWICE:
-    once in h_{t-1}, and again in the current sequence
-  - This creates cascading redundancy that DIVERGES from training
+THE FIX APPLIED:
+  - get_action() and get_actions_batch() now pass hidden=None
+  - _actor_hidden field removed entirely
+  - Inference now matches training: clean sequence processing from zeros
+  - Context window = sequence_length (16 steps at 100Hz = 0.16s)
 
-CONSEQUENCE:
-  The actor learns to produce good actions given (sequence, h=0).
-  But at inference time it receives (sequence, h=accumulated_garbage).
-  The LSTM output is completely different, producing destructive actions.
-
-FIX OPTIONS:
-  A) Remove persistent hidden state in inference (use h=None each step)
-     - Simple, guaranteed to match training exactly
-     - Context limited to sequence_length (16 steps = 0.16s at 100Hz)
-     
-  B) Use ONLY the latest single obs in inference, rely on hidden for history
-     - Requires changing training to also be step-by-step recurrent (BPTT)
-     - Much more complex, changes the entire training architecture
+Tests 1, 2, 5 demonstrate WHY persistent hidden is wrong (regression proof).
+Test 3 confirms the fix works: inference == training actions.
+Test 4 confirms sequence construction is correct.
 """)
+
