@@ -38,6 +38,9 @@ class TrainConfig:
     policy_noise: float = 0.2
     noise_clip: float = 0.5
     policy_delay: int = 2
+
+    critic_warmup_gradient_steps: int = 5000
+    actor_lr_warmup_steps: int = 5000
     
     exploration_noise_start: float = 0.1
     exploration_noise_end: float = 0.01
@@ -216,7 +219,8 @@ class Trainer:
                 tau=self.config.tau,
                 policy_noise=self.config.policy_noise,
                 noise_clip=self.config.noise_clip,
-                policy_delay=self.config.policy_delay
+                policy_delay=self.config.policy_delay,
+                actor_lr_warmup_steps=self.config.actor_lr_warmup_steps
             )
         else:
             self.agent = create_agent(
@@ -502,11 +506,14 @@ class Trainer:
             if self.timesteps >= self.config.learning_starts:
                 if self.timesteps % self.config.train_freq == 0:
                     for _ in range(self.config.gradient_steps):
-                        critic_warmup = (self.timesteps - self.config.learning_starts) < 5000
+                        if not hasattr(self, '_critic_grad_steps'):
+                            self._critic_grad_steps = 0
+                        critic_warmup = self._critic_grad_steps < self.config.critic_warmup_gradient_steps
                         metrics = self.agent.update(
                             self.buffer, self.config.batch_size,
                             critic_only=critic_warmup
                         )
+                        self._critic_grad_steps += 1
                         if metrics:
                             history['actor_loss'].append(metrics.get('actor_loss', 0))
                             history['critic_loss'].append(metrics.get('critic_loss', 0))
@@ -709,7 +716,10 @@ def main():
         lstm_hidden=cfg['lstm'].get('hidden_dim', 128),
         lstm_layers=cfg['lstm'].get('num_layers', 2),
         sequence_length=cfg['lstm'].get('sequence_length', 16),
-        burn_in_length=cfg['lstm'].get('burn_in', 0)
+        burn_in_length=cfg['lstm'].get('burn_in', 0),
+
+        critic_warmup_gradient_steps=cfg['training'].get('critic_warmup_gradient_steps', 5000),
+        actor_lr_warmup_steps=cfg['training'].get('actor_lr_warmup_steps', 5000)
     )
     
     env_cfg = cfg['environment']

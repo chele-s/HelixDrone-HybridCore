@@ -462,6 +462,7 @@ class TD3LSTMAgent:
         noise_clip: float = 0.5,
         policy_delay: int = 2,
         gradient_clip: float = 1.0,
+        actor_lr_warmup_steps: int = 5000,
         use_amp: bool = True,
         compile_networks: bool = True
     ):
@@ -524,8 +525,12 @@ class TD3LSTMAgent:
         self._single_obs_full = False
 
         self._train_steps = 0
+        self._actor_update_steps = 0
         self._actor_loss = 0.0
         self._critic_loss = 0.0
+
+        self._base_actor_lr = lr_actor
+        self.actor_lr_warmup_steps = actor_lr_warmup_steps
 
         self.use_lstm = True
     
@@ -745,23 +750,32 @@ class TD3LSTMAgent:
         }
         
         if not critic_only and self._train_steps % self.policy_delay == 0:
+            if self.actor_lr_warmup_steps > 0:
+                warmup_ratio = min(1.0, self._actor_update_steps / self.actor_lr_warmup_steps)
+                current_lr = self._base_actor_lr * max(warmup_ratio, 0.01)
+                for pg in self.actor_optimizer.param_groups:
+                    pg['lr'] = current_lr
+
             with torch.amp.autocast('cuda', enabled=self.use_amp):
                 actor_actions, _ = self.actor(obs_seq, actor_burn_in_hidden, lengths)
                 actor_q1, _ = self.critic.q1_forward(obs_seq, actor_actions, critic_burn_in_hidden, lengths)
                 actor_q1 = actor_q1.clamp(-200.0, 200.0)
                 actor_loss = -actor_q1.mean()
-            
+                actor_loss = actor_loss.clamp(-50.0, 50.0)
+
             self.actor_optimizer.zero_grad()
             self.scaler.scale(actor_loss).backward()
             self.scaler.unscale_(self.actor_optimizer)
             nn.utils.clip_grad_norm_(self.actor.parameters(), self.gradient_clip)
             self.scaler.step(self.actor_optimizer)
-            
+
             self._soft_update(self.actor, self.actor_target)
             self._soft_update(self.critic, self.critic_target)
-            
+
+            self._actor_update_steps += 1
             self._actor_loss = actor_loss.item()
             metrics['actor_loss'] = self._actor_loss
+            metrics['actor_lr'] = self.actor_optimizer.param_groups[0]['lr']
         
         self.scaler.update()
         
