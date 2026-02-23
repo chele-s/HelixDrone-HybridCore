@@ -718,7 +718,6 @@ class TD3LSTMAgent:
                 
                 target_q1, target_q2, _ = self.critic_target(next_obs_seq, next_actions, critic_burn_in_hidden_next, next_lengths)
                 target_q = torch.min(target_q1, target_q2)
-                target_q = target_q.clamp(-200.0, 200.0)
                 target_q = rewards + (1 - dones) * self.gamma * target_q
             
             current_q1, current_q2, _ = self.critic(obs_seq, actions, critic_burn_in_hidden, lengths)
@@ -759,9 +758,7 @@ class TD3LSTMAgent:
             with torch.amp.autocast('cuda', enabled=self.use_amp):
                 actor_actions, _ = self.actor(obs_seq, actor_burn_in_hidden, lengths)
                 actor_q1, _ = self.critic.q1_forward(obs_seq, actor_actions, critic_burn_in_hidden, lengths)
-                actor_q1 = actor_q1.clamp(-200.0, 200.0)
                 actor_loss = -actor_q1.mean()
-                actor_loss = actor_loss.clamp(-50.0, 50.0)
 
             self.actor_optimizer.zero_grad()
             self.scaler.scale(actor_loss).backward()

@@ -330,7 +330,11 @@ class QuadrotorEnv(gym.Env):
         self._prev_action = action.copy()
         self._episode_reward += reward
         
-        return obs, reward, terminated, truncated, self._get_info()
+        info = self._get_info()
+        if terminated or truncated:
+            info['terminal_observation'] = obs.copy()
+        
+        return obs, reward, terminated, truncated, info
     
     def _get_obs(self) -> np.ndarray:
         s = self._drone.get_state()

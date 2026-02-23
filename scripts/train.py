@@ -434,14 +434,21 @@ class Trainer:
             
             if self.is_vectorized:
                 if self.use_lstm:
-                    obs_base_batch = obs_raw[:, :self.base_obs_dim]
-                    next_obs_base_batch = next_obs_raw[:, :self.base_obs_dim]
+                    obs_base_batch = obs_raw[:, :self.base_obs_dim].copy()
+                    next_obs_base_batch = next_obs_raw[:, :self.base_obs_dim].copy()
+                    
+                    for i in range(self.config.num_envs):
+                        if (terminated[i] or truncated[i]) and 'final_info' in info['envs'][i]:
+                            if 'terminal_observation' in info['envs'][i]['final_info']:
+                                term_obs = info['envs'][i]['final_info']['terminal_observation']
+                                next_obs_base_batch[i] = term_obs[:self.base_obs_dim]
+                    
                     self.buffer.push_batch(
                         states=obs_base_batch,
                         actions=action,
                         rewards=reward,
                         next_states=next_obs_base_batch,
-                        dones=terminated
+                        dones=terminated | truncated
                     )
                 else:
                     self.buffer.push_batch(
@@ -449,7 +456,7 @@ class Trainer:
                         actions=action if action.ndim == 2 else action.reshape(1, -1),
                         rewards=reward if isinstance(reward, np.ndarray) else np.array([reward]),
                         next_states=next_obs if next_obs.ndim == 2 else next_obs.reshape(1, -1),
-                        dones=terminated if isinstance(terminated, np.ndarray) else np.array([terminated])
+                        dones=(terminated | truncated) if isinstance(terminated, np.ndarray) else np.array([terminated | truncated])
                     )
                 
                 done_envs = []
@@ -474,12 +481,17 @@ class Trainer:
             else:
                 done = terminated or truncated
                 
+                term_obs_raw = next_obs_raw
+                if done and 'terminal_observation' in info:
+                    term_obs_raw = info['terminal_observation']
+                term_obs = self._normalize_obs(term_obs_raw, update=False)
+                
                 if self.use_lstm:
                     obs_base = obs_raw[:self.base_obs_dim]
-                    next_obs_base = next_obs_raw[:self.base_obs_dim]
-                    self.buffer.push(obs_base, action, reward, next_obs_base, terminated)
+                    next_obs_base = term_obs_raw[:self.base_obs_dim]
+                    self.buffer.push(obs_base, action, reward, next_obs_base, done)
                 else:
-                    self.buffer.push(obs, action, reward, next_obs, terminated)
+                    self.buffer.push(obs, action, reward, term_obs, done)
                     
                 episode_reward += reward
                 episode_length += 1
