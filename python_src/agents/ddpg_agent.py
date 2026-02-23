@@ -463,7 +463,7 @@ class TD3LSTMAgent:
         policy_delay: int = 2,
         gradient_clip: float = 1.0,
         actor_lr_warmup_steps: int = 5000,
-        use_amp: bool = True,
+        use_amp: bool = False,
         compile_networks: bool = True
     ):
         self.device = device

@@ -121,10 +121,8 @@ class AdaptiveExplorationNoise:
         self.recent_crashes = deque(maxlen=100)
         self.warmup_complete = False
     
-    def update(self, crashed: bool = False) -> float:
-        self.steps += 1
-        self.recent_crashes.append(float(crashed))
-        
+    def step(self, num_steps: int = 1) -> float:
+        self.steps += num_steps
         if self.steps < self.warmup_steps:
             progress = self.steps / self.warmup_steps
             self.current_noise = self.start_noise + (self.end_noise - self.start_noise) * progress
@@ -132,15 +130,16 @@ class AdaptiveExplorationNoise:
             self.warmup_complete = True
             self.current_noise = max(
                 self.min_noise,
-                self.current_noise * self.decay_rate
+                self.current_noise * (self.decay_rate ** num_steps)
             )
-        
+        return self.current_noise
+    
+    def report_episode(self, crashed: bool = False) -> None:
+        self.recent_crashes.append(float(crashed))
         crash_rate = np.mean(self.recent_crashes) if self.recent_crashes else 0.0
-        if crash_rate > 0.5 and self.steps > 1000:
+        if crash_rate > 0.5 and self.warmup_complete:
             boost = 1.0 + (crash_rate - 0.5) * self.crash_penalty_factor
             self.current_noise = min(self.start_noise, self.current_noise * boost)
-        
-        return self.current_noise
     
     @property
     def noise(self) -> float:
@@ -431,6 +430,7 @@ class Trainer:
             
             next_obs_raw, reward, terminated, truncated, info = self.env.step(action)
             next_obs = self._normalize_obs(next_obs_raw, update=True)
+            self.exploration.step(self.config.num_envs if self.is_vectorized else 1)
             
             if self.is_vectorized:
                 if self.use_lstm:
@@ -448,7 +448,7 @@ class Trainer:
                         actions=action,
                         rewards=reward,
                         next_states=next_obs_base_batch,
-                        dones=terminated | truncated
+                        dones=terminated
                     )
                 else:
                     self.buffer.push_batch(
@@ -456,7 +456,7 @@ class Trainer:
                         actions=action if action.ndim == 2 else action.reshape(1, -1),
                         rewards=reward if isinstance(reward, np.ndarray) else np.array([reward]),
                         next_states=next_obs if next_obs.ndim == 2 else next_obs.reshape(1, -1),
-                        dones=(terminated | truncated) if isinstance(terminated, np.ndarray) else np.array([terminated | truncated])
+                        dones=terminated if isinstance(terminated, np.ndarray) else np.array([terminated])
                     )
                 
                 done_envs = []
@@ -466,7 +466,7 @@ class Trainer:
                     
                     if terminated[i] or truncated[i]:
                         crashed = terminated[i] and episode_length[i] < 100
-                        self.exploration.update(crashed=crashed)
+                        self.exploration.report_episode(crashed=crashed)
                         self.stats.add(episode_reward[i], episode_length[i])
                         history['rewards'].append(episode_reward[i])
                         self.episodes += 1
@@ -499,7 +499,7 @@ class Trainer:
                 
                 if done:
                     crashed = terminated and episode_length < 100
-                    self.exploration.update(crashed=crashed)
+                    self.exploration.report_episode(crashed=crashed)
                     self.stats.add(episode_reward, episode_length)
                     history['rewards'].append(episode_reward)
                     self.episodes += 1
