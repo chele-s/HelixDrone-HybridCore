@@ -107,3 +107,4 @@ crash_diagnostic_output.txt
 lstm_debug_output.txt
 scripts/test_clamp_grad.py
 scripts/train.py
+scripts/fix_hyperparams.py

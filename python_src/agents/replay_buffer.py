@@ -635,6 +635,12 @@ class CppSequenceReplayBuffer:
             return ret
         return self._py.sample(batch_size)
     
+    def end_episode(self) -> None:
+        if self._use_cpp:
+            self._cpp.end_episode()
+        elif hasattr(self._py, 'end_episode'):
+            self._py.end_episode()
+
     def __len__(self) -> int:
         return self._cpp.size() if self._use_cpp else len(self._py)
     
@@ -742,6 +748,12 @@ class CppSequencePrioritizedReplayBuffer:
         else:
             self._py.update_priorities(sequence_indices, td_errors)
     
+    def end_episode(self) -> None:
+        if self._use_cpp:
+            self._cpp.end_episode()
+        elif hasattr(self._py, 'end_episode'):
+            self._py.end_episode()
+
     def __len__(self) -> int:
         return self._cpp.size() if self._use_cpp else len(self._py)
     

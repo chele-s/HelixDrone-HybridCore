@@ -184,7 +184,6 @@ class Trainer:
             self.env = QuadrotorEnv(config=self.env_config, task=TaskType.HOVER)
             self.is_vectorized = False
         
-        # Create deterministic eval environment (no randomization)
         from dataclasses import replace
         eval_env_config = replace(
             self.env_config,
@@ -278,6 +277,12 @@ class Trainer:
                     state_dim=self.state_dim,
                     action_dim=self.action_dim
                 )
+        
+        if self.use_lstm and self.is_vectorized:
+            self._local_buffers = [
+                {'obs': [], 'act': [], 'rew': [], 'next_obs': [], 'done': []}
+                for _ in range(self.config.num_envs)
+            ]
     
     def _setup_normalization(self):
         if self.config.use_obs_normalization and not self.use_lstm:
@@ -434,22 +439,38 @@ class Trainer:
             
             if self.is_vectorized:
                 if self.use_lstm:
-                    obs_base_batch = obs_raw[:, :self.base_obs_dim].copy()
-                    next_obs_base_batch = next_obs_raw[:, :self.base_obs_dim].copy()
-                    
                     for i in range(self.config.num_envs):
+                        obs_base_i = obs_raw[i, :self.base_obs_dim].copy()
+
                         if (terminated[i] or truncated[i]) and 'final_info' in info['envs'][i]:
                             if 'terminal_observation' in info['envs'][i]['final_info']:
                                 term_obs = info['envs'][i]['final_info']['terminal_observation']
-                                next_obs_base_batch[i] = term_obs[:self.base_obs_dim]
-                    
-                    self.buffer.push_batch(
-                        states=obs_base_batch,
-                        actions=action,
-                        rewards=reward,
-                        next_states=next_obs_base_batch,
-                        dones=terminated
-                    )
+                                next_obs_base_i = term_obs[:self.base_obs_dim].copy()
+                            else:
+                                next_obs_base_i = next_obs_raw[i, :self.base_obs_dim].copy()
+                        else:
+                            next_obs_base_i = next_obs_raw[i, :self.base_obs_dim].copy()
+
+                        self._local_buffers[i]['obs'].append(obs_base_i)
+                        self._local_buffers[i]['act'].append(action[i].copy())
+                        self._local_buffers[i]['rew'].append(float(reward[i]))
+                        self._local_buffers[i]['next_obs'].append(next_obs_base_i)
+                        self._local_buffers[i]['done'].append(float(terminated[i]))
+
+                        if terminated[i] or truncated[i]:
+                            buf = self._local_buffers[i]
+                            n = len(buf['obs'])
+                            if n > 0:
+                                self.buffer.push_batch(
+                                    states=np.array(buf['obs'], dtype=np.float32),
+                                    actions=np.array(buf['act'], dtype=np.float32),
+                                    rewards=np.array(buf['rew'], dtype=np.float32),
+                                    next_states=np.array(buf['next_obs'], dtype=np.float32),
+                                    dones=np.array(buf['done'], dtype=np.float32)
+                                )
+                                if not terminated[i]:
+                                    self.buffer.end_episode()
+                            self._local_buffers[i] = {'obs': [], 'act': [], 'rew': [], 'next_obs': [], 'done': []}
                 else:
                     self.buffer.push_batch(
                         states=obs if obs.ndim == 2 else obs.reshape(1, -1),
@@ -489,7 +510,9 @@ class Trainer:
                 if self.use_lstm:
                     obs_base = obs_raw[:self.base_obs_dim]
                     next_obs_base = term_obs_raw[:self.base_obs_dim]
-                    self.buffer.push(obs_base, action, reward, next_obs_base, done)
+                    self.buffer.push(obs_base, action, reward, next_obs_base, float(terminated))
+                    if done and not terminated:
+                        self.buffer.end_episode()
                 else:
                     self.buffer.push(obs, action, reward, term_obs, done)
                     

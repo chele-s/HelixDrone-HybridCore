@@ -18,7 +18,7 @@ endif()
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 
 execute_process(
-    COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; print(pybind11.get_cmake_dir())"
+    COMMAND python -c "import pybind11; print(pybind11.get_cmake_dir())"
     OUTPUT_VARIABLE _pybind11_dir
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
